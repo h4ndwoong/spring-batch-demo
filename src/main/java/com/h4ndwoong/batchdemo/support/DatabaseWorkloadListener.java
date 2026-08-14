@@ -75,6 +75,21 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
     public static final String ROWS_SCANNED = "HANDLER_READ_NEXT";
 
     /**
+     * 인덱스로 행을 <b>찾은</b> 횟수(탐색). <b>4번 문제(Processor N+1)의 보조 지표</b>다.
+     *
+     * <p>4번의 before/after 는 {@link #ROWS_SCANNED} 로는 거의 구분되지 않는다. 양쪽 다 추천인을
+     * PK 로 한 건씩 찾을 뿐이라 <em>읽는 행 수</em>가 비슷하기 때문이다. 달라지는 것은 그 탐색을
+     * <b>몇 번의 왕복에 나눠 담았는가</b>이고, 그것은 {@code COM_SELECT} 가 말해준다.
+     * <ul>
+     *   <li>{@code COM_SELECT} — before 는 행당 2, after 는 청크당 1. <b>1,000배 차이</b></li>
+     *   <li>이 카운터 — before 는 행당 2, after 도 행당 1 수준. <b>2배 차이</b></li>
+     * </ul>
+     * 둘을 나란히 봐야 "왕복을 줄인 것이지 DB 가 할 일을 없앤 것이 아니다" 가 드러난다.
+     * 1번 문제에서 왕복이 1,016배 줄 때 IO 는 8.7배만 줄었던 것과 같은 종류의 눈금이다.
+     */
+    public static final String INDEX_LOOKUPS = "HANDLER_READ_KEY";
+
+    /**
      * 인덱스를 타지 않고 다음 행을 읽은 횟수(풀 스캔).
      *
      * <p>{@link #ROWS_SCANNED} 와 함께 본다. 이 값이 크면 의도한 인덱스를 안 타고 있다는 뜻이라,
@@ -90,12 +105,12 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
 
     /**
      * 읽을 카운터. 1번 문제만이 아니라 7문제 전부의 지표를 한 벌로 모은다.
-     * 6번(대량 UPDATE)은 {@code COM_UPDATE}, 4번(N+1 조회)은 {@code COM_SELECT},
-     * 3번(offset 페이징)은 {@link #ROWS_SCANNED} 가 주 지표다.
+     * 6번(대량 UPDATE)은 {@code COM_UPDATE}, 4번(N+1 조회)은 {@code COM_SELECT} 와
+     * {@link #INDEX_LOOKUPS}, 3번(offset 페이징)은 {@link #ROWS_SCANNED} 가 주 지표다.
      */
     private static final List<String> COUNTERS = List.of(
             INSERT_STATEMENTS, BULK_STATEMENTS, "COM_UPDATE", "COM_SELECT", "COM_COMMIT",
-            ROWS_SCANNED, ROWS_SCANNED_NO_INDEX, PAGES_WRITTEN, BYTES_WRITTEN);
+            ROWS_SCANNED, ROWS_SCANNED_NO_INDEX, INDEX_LOOKUPS, PAGES_WRITTEN, BYTES_WRITTEN);
 
     /**
      * {@code information_schema.GLOBAL_STATUS} 가 아니라 {@code SHOW GLOBAL STATUS} 를 쓴다.
