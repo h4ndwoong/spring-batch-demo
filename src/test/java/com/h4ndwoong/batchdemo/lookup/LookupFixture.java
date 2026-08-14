@@ -4,6 +4,8 @@ import com.h4ndwoong.batchdemo.domain.MemberBase;
 import com.h4ndwoong.batchdemo.domain.MemberD;
 import com.h4ndwoong.batchdemo.domain.MemberGrade;
 import com.h4ndwoong.batchdemo.seed.MemberSeedGenerator;
+import com.h4ndwoong.batchdemo.support.GradePolicy;
+import com.h4ndwoong.batchdemo.support.GradePolicyLoader;
 import com.h4ndwoong.batchdemo.support.MemberTableSeeder;
 
 import java.util.ArrayList;

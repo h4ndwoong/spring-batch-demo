@@ -1,6 +1,8 @@
-package com.h4ndwoong.batchdemo.lookup;
+package com.h4ndwoong.batchdemo.support;
 
 import com.h4ndwoong.batchdemo.domain.MemberGrade;
+
+import java.util.List;
 
 /**
  * 포인트로 등급을 정하는 정책. <b>순수 함수이며 DB 를 모른다.</b>
@@ -10,14 +12,30 @@ import com.h4ndwoong.batchdemo.domain.MemberGrade;
  * 정책 <em>값</em>이 데이터에서 나오고({@link GradePolicyLoader}) 정책 <em>적용</em>이 여기서 끝나는
  * 구조라야, 정책이 설정 파일이나 정책 테이블로 바뀌어도 프로세서는 그대로다.
  *
- * <p><b>이 정책은 before/after 가 똑같이 쓴다.</b> 4번의 비교 축은 조회 방식 하나뿐이고, 산정
- * 규칙이 조금이라도 다르면 결과 체크섬이 갈라져 "같은 일을 더 적은 왕복으로 했다" 가 성립하지 않는다.
+ * <p><b>이 정책은 before/after 가 똑같이 쓴다.</b> 4번의 비교 축은 조회 방식 하나, 6번의 비교 축은
+ * 쓰기 경로 하나뿐이고, 산정 규칙이 조금이라도 다르면 결과 체크섬이 갈라져 "같은 일을 더 적은
+ * 왕복으로 했다" 가 성립하지 않는다.
+ *
+ * <p><b>{@code lookup} 패키지에서 여기로 옮긴 이유</b><br>
+ * 6번 문제({@code updateJob})가 두 번째 소비자가 되었다. 소비자가 둘이 되는 순간 공용 자리로
+ * 옮기는 것이 이 저장소의 선례다 ({@code RunIdOnlyIncrementer} 가 같은 경로를 지났다). 옮기면서
+ * 규칙은 한 줄도 바꾸지 않았다 — 4번의 측정치가 이미 기록되어 있으므로 산출값이 달라지면 안 된다.
+ *
+ * <p><b>{@link #gradeOf(long)} 와 {@link #thresholdsDescending()} 는 같은 규칙의 두 표현이다.</b>
+ * 6번의 after 는 자바가 아니라 SQL 의 {@code CASE} 식으로 등급을 정하므로, 규칙이 두 곳에 적히면
+ * 배치는 {@code COMPLETED} 로 끝나고 등급만 조용히 틀린다. 그래서 SQL 을 손으로 쓰지 않고 이
+ * 임계값 목록에서 생성하며, 두 표현이 모든 경계에서 일치한다는 사실을 시험이 못 박는다.
  *
  * @param silverFrom 이 포인트부터 {@code SILVER}
  * @param goldFrom   이 포인트부터 {@code GOLD}
  * @param vipFrom    이 포인트부터 {@code VIP}
  */
 public record GradePolicy(long silverFrom, long goldFrom, long vipFrom) {
+
+    /**
+     * 어떤 임계값에도 닿지 못한 포인트의 등급. {@code CASE} 식의 {@code ELSE} 자리이기도 하다.
+     */
+    public static final MemberGrade BASE_GRADE = MemberGrade.BRONZE;
 
     /**
      * 정책을 만든다.
@@ -65,6 +83,10 @@ public record GradePolicy(long silverFrom, long goldFrom, long vipFrom) {
      * 경계가 어느 쪽에 속하는지는 취향의 문제이지만, 한쪽으로 정해 두지 않으면 before/after 가
      * 같은 코드를 쓰고도 다른 결과를 낼 여지가 생긴다.
      *
+     * <p>{@link #thresholdsDescending()} 를 순회해서 구현하지 <b>않았다.</b> 4번 문제가 이 메서드를
+     * 행마다 부르므로 (50만 회) 목록 생성이 측정치에 섞이지 않게 한다. 대신 두 표현이 일치한다는
+     * 것을 시험으로 고정한다.
+     *
      * @param point 포인트. 음수도 허용한다 (검증은 2번 문제의 주제다)
      * @return 등급
      */
@@ -78,6 +100,22 @@ public record GradePolicy(long silverFrom, long goldFrom, long vipFrom) {
         if (point >= silverFrom) {
             return MemberGrade.SILVER;
         }
-        return MemberGrade.BRONZE;
+        return BASE_GRADE;
+    }
+
+    /**
+     * 임계값을 <b>높은 등급부터</b> 나열한다. {@link #BASE_GRADE} 는 포함하지 않는다.
+     *
+     * <p>내림차순인 것이 계약의 일부다. "먼저 걸리는 것이 답" 이라는 순서가 곧
+     * {@link #gradeOf(long)} 의 {@code if} 사슬이고, SQL {@code CASE} 식의 {@code WHEN} 순서다.
+     * 목록을 뒤집어 쓰면 모든 회원이 {@code SILVER} 가 된다.
+     *
+     * @return 임계값 목록. 언제나 3개이며 {@code VIP → GOLD → SILVER} 순이다
+     */
+    public List<GradeThreshold> thresholdsDescending() {
+        return List.of(
+                new GradeThreshold(MemberGrade.VIP, vipFrom),
+                new GradeThreshold(MemberGrade.GOLD, goldFrom),
+                new GradeThreshold(MemberGrade.SILVER, silverFrom));
     }
 }

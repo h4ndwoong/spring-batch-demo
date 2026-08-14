@@ -1,4 +1,4 @@
-package com.h4ndwoong.batchdemo.lookup;
+package com.h4ndwoong.batchdemo.support;
 
 import com.h4ndwoong.batchdemo.domain.MemberGrade;
 import org.junit.jupiter.api.DisplayName;
@@ -72,6 +72,43 @@ class GradePolicyTest {
         void 뒤집힌_범위() {
             assertThatThrownBy(() -> GradePolicy.ofRange(100, 99))
                     .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("임계값 목록 - 6번 문제가 SQL 로 옮겨 갈 때 쓰는 표현")
+    class Thresholds {
+
+        private final GradePolicy policy = new GradePolicy(100, 200, 300);
+
+        @Test
+        @DisplayName("높은 등급부터 나열된다 - 이 순서가 곧 CASE 의 WHEN 순서다")
+        void 내림차순() {
+            assertThat(policy.thresholdsDescending())
+                    .as("뒤집어 쓰면 모든 회원이 SILVER 가 된다")
+                    .containsExactly(
+                            new GradeThreshold(MemberGrade.VIP, 300),
+                            new GradeThreshold(MemberGrade.GOLD, 200),
+                            new GradeThreshold(MemberGrade.SILVER, 100));
+        }
+
+        @Test
+        @DisplayName("목록과 gradeOf 가 모든 경계에서 같은 답을 낸다 - 규칙은 여전히 한 곳에 있다")
+        void 두_표현이_일치한다() {
+            for (long point : new long[]{-1, 0, 99, 100, 101, 199, 200, 201, 299, 300, 301, 10_000}) {
+                assertThat(byThresholds(policy, point))
+                        .as("point=%d", point)
+                        .isEqualTo(policy.gradeOf(point));
+            }
+        }
+
+        /** {@code CASE} 식이 하는 일을 자바로 옮긴 것. 서버에서의 일치는 {@code GradeCaseExpressionTest} 가 본다. */
+        private MemberGrade byThresholds(GradePolicy policy, long point) {
+            return policy.thresholdsDescending().stream()
+                    .filter(threshold -> point >= threshold.fromInclusive())
+                    .findFirst()
+                    .map(GradeThreshold::grade)
+                    .orElse(GradePolicy.BASE_GRADE);
         }
     }
 

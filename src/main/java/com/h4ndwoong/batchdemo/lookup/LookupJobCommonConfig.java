@@ -2,11 +2,13 @@ package com.h4ndwoong.batchdemo.lookup;
 
 import com.h4ndwoong.batchdemo.domain.MemberBase;
 import com.h4ndwoong.batchdemo.domain.MemberD;
+import com.h4ndwoong.batchdemo.support.GradePolicyLoader;
 import com.h4ndwoong.batchdemo.support.MemberRowMapper;
 import com.h4ndwoong.batchdemo.support.TableSeededValidator;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.item.database.JdbcCursorItemReader;
 import org.springframework.batch.item.database.builder.JdbcCursorItemReaderBuilder;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -135,12 +137,16 @@ public class LookupJobCommonConfig {
     /**
      * 등급 정책 로더.
      *
+     * <p><b>빈 이름에 테이블이 들어간다.</b> 6번 문제({@code updateJob})가 같은 타입의 로더를
+     * {@code member_f} 로 만들므로, 한 컨텍스트에 두 개가 뜬다. 타입만으로 주입받으면 어느 테이블의
+     * 정책인지가 조립 시점에 결정되어 <b>4번이 6번의 분포로 등급을 매기는</b> 사고가 가능해진다.
+     *
      * @param jdbcTemplate JDBC 템플릿
      * @return 로더
      */
     @Bean
-    public GradePolicyLoader gradePolicyLoader(JdbcTemplate jdbcTemplate) {
-        return new GradePolicyLoader(jdbcTemplate);
+    public GradePolicyLoader memberDGradePolicyLoader(JdbcTemplate jdbcTemplate) {
+        return new GradePolicyLoader(jdbcTemplate, "member_d");
     }
 
     /**
@@ -152,13 +158,14 @@ public class LookupJobCommonConfig {
      * 아니라 프로세서를 <em>만드는 곳</em>이다.
      *
      * @param referrerLookup 활성 프로파일의 조회 전략
-     * @param gradePolicyLoader 정책 로더
+     * @param gradePolicyLoader {@code member_d} 의 분포에서 정책을 얻는 로더
      * @return 프로세서
      */
     @Bean
     @StepScope
-    public GradeRecalculatingItemProcessor memberDItemProcessor(ReferrerLookup referrerLookup,
-                                                               GradePolicyLoader gradePolicyLoader) {
+    public GradeRecalculatingItemProcessor memberDItemProcessor(
+            ReferrerLookup referrerLookup,
+            @Qualifier("memberDGradePolicyLoader") GradePolicyLoader gradePolicyLoader) {
         return new GradeRecalculatingItemProcessor(referrerLookup, gradePolicyLoader.load());
     }
 

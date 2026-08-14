@@ -1,6 +1,7 @@
 package com.h4ndwoong.batchdemo.lookup;
 
 import com.h4ndwoong.batchdemo.domain.MemberBase;
+import com.h4ndwoong.batchdemo.support.GradePolicy;
 import org.springframework.batch.item.ItemProcessor;
 
 /**

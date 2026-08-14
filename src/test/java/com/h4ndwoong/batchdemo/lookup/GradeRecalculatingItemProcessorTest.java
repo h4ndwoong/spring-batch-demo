@@ -4,6 +4,7 @@ import com.h4ndwoong.batchdemo.domain.MemberBase;
 import com.h4ndwoong.batchdemo.domain.MemberD;
 import com.h4ndwoong.batchdemo.domain.MemberGrade;
 import com.h4ndwoong.batchdemo.domain.MemberStatus;
+import com.h4ndwoong.batchdemo.support.GradePolicy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

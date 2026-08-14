@@ -10,7 +10,7 @@ import com.h4ndwoong.batchdemo.domain.MemberGrade;
  * 50만 번의 조회를 강제하는 요구사항이고, before/after 는 그 요구를 각각 100만 번의 왕복과
  * 500번의 왕복으로 충족한다.
  *
- * <p>{@link GradePolicy} 와 달리 데이터에서 산출하지 않고 상수로 둔다. 정책 로딩은 이미 한 축을
+ * <p>{@link com.h4ndwoong.batchdemo.support.GradePolicy} 와 달리 데이터에서 산출하지 않고 상수로 둔다. 정책 로딩은 이미 한 축을
  * 보여주고 있고, 여기까지 데이터 의존으로 만들면 결과 체크섬이 시드 데이터에 두 겹으로 묶여
  * 무엇이 무엇을 바꿨는지 읽기 어려워진다.
  */
