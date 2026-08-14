@@ -119,7 +119,7 @@ Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙�
 |---|------------------------------------------------|------------|--------------|--------------------------------------------|-------------------------------------------|
 | 1 | 대량 INSERT 성능 (인덱스 유지 비용, 청크 커밋) | `member_a` | `insertJob`  | 인덱스 랜덤 갱신 + 잦은 커밋으로 적재 지연 | 인덱스 후생성, 청크 확대, JDBC batch 쓰기 |
 | 2 | skip/retry, 오류 행 격리                       | `member_b` | `skipJob`    | 오류 1건에 Step 전체 실패                  | faultTolerant + SkipListener 격리         |
-| 3 | offset 페이징 함정                             | `member_c` | `pagingJob`  | 뒤 페이지로 갈수록 페이지당 시간 선형 증가 | 커서 스트리밍 / 키셋(ZeroOffset) 페이징   |
+| 3 | offset 페이징 함정                             | `member_c` | `pagingJob`  | 뒤 페이지로 갈수록 페이지당 시간 선형 증가 | 키셋(ZeroOffset) 페이징                   |
 | 4 | Processor N+1 조회, 청크 사이즈                | `member_d` | `lookupJob`  | 행당 2회 조회 → 쿼리 수 폭증               | 정책 캐시 + 청크 단위 IN 일괄 조회        |
 | 5 | 재시작(restart) 멱등성                         | `member_e` | `restartJob` | 실패 후 재실행 시 포인트 이중 소멸         | process indicator + 멱등키 UK             |
 | 6 | 대량 UPDATE 쓰기 경로                          | `member_f` | `updateJob`  | 행별 UPDATE 반복 (bulk 미적용)             | 집합 UPDATE / `useBulkStmts`              |
@@ -252,19 +252,91 @@ FROM member_b_error GROUP BY 1;                                       -- EMAIL_F
 | Job    | `pagingJob` → `pagingStep` (Step 1개) |
 | 데이터 | 200만 건                              |
 
-**시나리오** — `member_c` 전체를 순회하며 읽는다.
+**시나리오** — `member_c` 전체를 1,000행씩 2,000페이지로 순회하며 읽는다. **DB 에는 아무것도 쓰지 않는다** — 쓰기 비용(행당 1왕복)이 읽기 경로의 차이를 덮어버리기 때문이고, 그건 6번 문제의 주제이기 때문이다.
 
 **before**
 
-- `JdbcPagingItemReader` 의 offset 방식 (`LIMIT 1000 OFFSET n`)
-- 뒤 페이지일수록 DB가 앞 레코드를 버리는 비용이 커져 **페이지당 시간이 선형 증가**
+- `OffsetPagingItemReader` — `... ORDER BY id ASC LIMIT ? OFFSET ?`
+- `OFFSET n` 은 "n번째부터 주세요" 가 아니라 **"앞의 n건을 읽고 버린 뒤 주세요"** 다. 2,000페이지는 200만 행을 읽고 199만 9천 행을 버린 뒤 1,000행을 준다
+- 페이지당 시간이 페이지 번호에 비례해 증가하고, 전체 스캔량이 **N²/(2×페이지크기) ≈ 20억 행**이 된다
 
 **after**
 
-- 키셋 페이징: `WHERE id > :lastId ORDER BY id ASC LIMIT 1000` (offset 0 고정)
-- 또는 `JdbcCursorItemReader` / `fetchSize` 조정으로 커서 스트리밍
+- `KeysetPagingItemReader` — `... WHERE id > ? ORDER BY id ASC LIMIT ?` (offset 0 고정)
+- PK 인덱스로 시작점을 한 번 찾고 1,000행만 읽는다. 페이지 번호와 무관하므로 **전체 스캔량 = N (200만 행)**
 
-**측정 지표** — 페이지 번호별 소요 시간 그래프 (선형 증가 vs 평탄), 총 소요 시간, DB CPU
+> **`JdbcPagingItemReader` 로는 before 가 재현되지 않는다.** Spring Batch 의 `MySqlPagingQueryProvider` 는 2페이지부터
+> `generateRemainingPagesQuery()` → `generateLimitSqlQuery(provider, true, "LIMIT n")` 를 쓰는데, 두 번째 인자가 `true` 면 정렬 키 조건(`WHERE id > ?`)을
+> 붙인다. 즉 **내장 페이징 리더는 이미 키셋**이고 OFFSET 은 재시작용 `generateJumpToItemQuery()` 에만 나온다. 실무에서 이 함정에 빠지는 경로는
+> `JpaPagingItemReader`(`setFirstResult` → `LIMIT ? OFFSET ?`)이거나 직접 짠 페이징 쿼리이며, 후자를 그대로 재현한 것이 before 다. JPA 리더를 쓰지 않은 이유는
+> 하이드레이션 비용이라는 **두 번째 변수**가 끼어들어 after(JDBC 키셋)와의 비교 축이 오염되기 때문이다.
+
+**측정 지표** — 페이지 번호별 소요 시간 (선형 증가 vs 평탄), 총 소요 시간, **인덱스 스캔 행 수(`Handler_read_next`)**
+
+### 대사식
+
+```
+before.체크섬        = after.체크섬              같은 집합을 같은 순서로 읽었다
+before.COM_SELECT   ≈ after.COM_SELECT          쿼리 "횟수" 는 같다  ← 이게 이 문제의 핵심
+before.Handler_read_next / after.Handler_read_next ≈ N / (2 × 페이지크기) = 1,000배
+```
+
+**3번 문제에서 봐야 할 축은 여기다.** 1번은 왕복이 1,000배 줄어서 빨라졌고, 2번은 완주 여부가 달랐다. 3번은 **왕복 횟수가 똑같은데 느리다.** 쿼리 수·커밋 수·처리
+건수로는 두 구현이 구분되지 않고, **쿼리 하나가 읽는 행 수**로만 구분된다. 애플리케이션 지표만 보고 있으면 이 문제는 보이지 않는다.
+
+**Job 파라미터**
+
+| 파라미터 | 기본값       | 설명                                                                 |
+|----------|--------------|----------------------------------------------------------------------|
+| `pages`  | `0` (= 전체) | 읽을 페이지 수 상한. before 전체 완주가 길어 앞 구간만 비교할 때 쓴다 |
+
+before 의 전체 완주는 **약 10분**이다 (실측 622초. after 는 15초). 총 스캔량이 20억 행이라 그렇고, `member_c` 가 188 MiB 로 기본 버퍼 풀 128 MiB 에 다 들어가지 않는 것도
+얹힌다. `pages=200` 이면 앞 20만 건만 읽지만 **페이지별 시간 그래프의 기울기**는 그 구간에서 이미 드러난다. 양쪽에 같은 값을 주는 한 비교는 공정하다.
+
+**실행**
+
+```bash
+# 0. 시딩 (한 번만, 200만 건). member_c 가 비어 있으면 pagingJob 은 시작하지 않는다.
+./gradlew bootRun --args="--spring.batch.job.enabled=true --spring.batch.job.name=seedJob target=member_c"
+
+# 빠른 비교 (앞 200페이지)
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob' pages=200
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after  --spring.batch.job.name=pagingJob' pages=200
+
+# 전체 완주
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob'
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after  --spring.batch.job.name=pagingJob'
+```
+
+**리셋이 필요 없다.** 이 Job 은 읽기만 하므로 몇 번을 돌려도 `member_c` 가 변하지 않는다. 버퍼 풀 워밍업 편차를 줄이려면 각 프로파일을 연속 2회 실행하고 2회차 값을 쓴다.
+
+**측정**
+
+```bash
+# 페이지별 시간 그래프의 원자료
+./gradlew bootRun ... | grep -o 'PAGE_TIMING,.*' > data/before.csv   # page,rows,elapsed_ms
+```
+
+```sql
+SELECT s.STEP_NAME, s.STATUS, s.READ_COUNT, s.WRITE_COUNT, s.COMMIT_COUNT,
+       TIMESTAMPDIFF(SECOND, s.START_TIME, s.END_TIME) AS SECONDS
+FROM BATCH_STEP_EXECUTION s
+ORDER BY s.STEP_EXECUTION_ID DESC;
+```
+
+로그에는 페이지별 표와 요약(첫 10페이지 평균 / 마지막 10페이지 평균 / 배율), 순회 체크섬, `DatabaseWorkloadListener` 의 카운터 증가분이 남는다.
+
+페이지별 원자료는 `data/paging-before.csv`, `data/paging-after.csv` 에 있다 (2,001행, `page,rows,elapsed_ms`).
+
+**2만 건 축소판 실측** — `BeforePagingJobTest` / `AfterPagingJobTest` 가 고정한다. 200만 건 실측치는 문서 맨 아래 비교 기록에 있다.
+
+| | before | after |
+|---|---|---|
+| `COM_SELECT` | **48** | **48** |
+| `Handler_read_next` | **229,982** (건수의 11.5배) | **19,982** (건수의 1.0배) |
+| 체크섬 | `count=20000, min=1, max=20000, sum=200010000` | **완전히 동일** |
+
+이론값은 before 가 Σ(k×1,000) + 마지막 빈 페이지 20,000 = 230,000 이다. 실측이 229,982 로 맞아떨어진다. 200만 건에서는 이 배율이 11.5배가 아니라 **1,000배**가 된다.
 
 ---
 
@@ -379,6 +451,8 @@ FROM member_b_error GROUP BY 1;                                       -- EMAIL_F
 | 2    | `skipJob`   | before          | **0.04s** (Step. 100건에서 멈춤)  | UPDATE 107 / 커밋 1 / **롤백 1** / 스킵 0 / 격리 0                                                              |     | **0.0 MiB**                                       | `FAILED`. 10만 건 중 **100건만** 반영, 오염 행 정보 없음                          |
 | 2    | `skipJob`   | after           | **6.3s** (Step. 99,500건 완주)    | UPDATE 101,507 (행당 1.02) / 커밋 1,001 / **롤백 500** / 스킵 500 / 격리 INSERT 500                              |     | **41.2 MiB**                                      | `COMPLETED`. 대사 완전 일치, 오염 500건 격리                                      |
 | 2    | `skipJob`   | after (+장애 2회) | **5.7s** (Step)                  | 위와 동일 / **롤백 502** (스킵 500 + 재시도 2)                                                                  |     | 10.6 MiB (백그라운드 flush 타이밍 차)             | `faultAtId=50001 faultTimes=2` → 재시도로 회복, 격리 테이블에 WRITE 기록 없음     |
+| 3    | `pagingJob` | before          | **622s** (Step, 3.2k rows/s)     | SELECT **4,009** / 커밋 2,001 / **스캔 행 2,002,998,002 (행당 1,001회)**                                        |     | 146.5 MiB (읽기 전용 Job. 아래 해석 참고)         | `LIMIT ? OFFSET ?`. 첫 10페이지 5.8ms → 마지막 10페이지 707.6ms (**122.9배**)     |
+| 3    | `pagingJob` | after           | **15s** (Step, **41× ↓**)        | SELECT **4,008** (**before 와 1건 차**) / 커밋 2,001 / **스캔 행 1,998,002 (1,002× ↓)**                          |     | 37.7 MiB                                          | `WHERE id > ?`. 첫 10페이지 3.5ms → 마지막 10페이지 2.2ms (**0.6배**, 평탄)      |
 
 ### 1번 문제에서 읽어야 할 것
 
@@ -413,6 +487,26 @@ FROM member_b_error GROUP BY 1;                                       -- EMAIL_F
 - **재실행해도 결과가 같다.** 같은 데이터로 두 번 돌린 실행(6번, 7번)의 `READ/WRITE/SKIP/COMMIT/ROLLBACK` 이 완전히 동일하다. 쓰기가 `SET processed = 1` 이라 멱등이고,
   격리 기록만 `step_execution_id` 로 구분되어 쌓인다. 측정을 다시 하고 싶으면 `UPDATE member_b SET processed = 0, updated_at = NULL` 만 하면 된다 — **재시딩이 필요 없다.**
 
+### 3번 문제에서 읽어야 할 것
+
+- **쿼리 수는 4,009 대 4,008 이다. 1건 차이다.** 41배 느린 실행과 빠른 실행이 왕복 횟수로는 구분되지 않는다. 커밋 수(2,001)도, 읽은 건수(200만)도, 체크섬도 같다. 1번 문제는 왕복을
+  1,016배 줄여서 빨라졌지만 여기서는 **왕복이 그대로다.** 다른 것은 `Handler_read_next` 하나뿐이고 — 20억 대 200만, **1,002배** — 그 값은 배치도 애플리케이션 로그도 모른다.
+  **애플리케이션 지표만 보고 있으면 이 문제는 존재하지 않는 것처럼 보인다.**
+- **이론값이 그대로 나왔다.** offset 의 총 스캔량은 N²/(2×페이지크기) + N = 2,003,000,000 이어야 하는데 실측이 **2,002,998,002** 이다 (오차 1,998, 0.0001%). 이 문제는 성능 감이 아니라
+  **산수로 예측된다.** 페이지 크기를 5,000으로 올리면 총 스캔량이 1/5로 준다는 것도 같은 식에서 나온다.
+- **시간은 41배 느린데 스캔은 1,002배다.** 버리는 행이 싸기 때문이다. 페이지 2,000은 200만 행을 701ms에 버리는데(2.8M rows/s), 실제로 돌려주는 1,000행에는 5.8ms가 든다(172k rows/s).
+  **행 하나를 버리는 비용은 돌려주는 비용의 1/16이다.** 그런데 개수가 2,000배라서 결국 압도한다. 개별 연산이 싸다는 사실이 총량을 안전하게 만들어 주지 않는다 — 이것이 offset 페이징이
+  개발 환경에서 멀쩡해 보이는 이유이기도 하다.
+- **마지막 빈 페이지 한 장이 666ms 다.** 아무것도 돌려주지 않는 그 조회가 200만 행을 훑는다 (after 는 같은 조회가 **0.4ms**). "더 없는지" 를 확인하는 비용조차 offset 에서는 전체 스캔이다.
+- **Step 622초 중 597초(96%)가 페이지 획득이다.** 커밋도, 매핑도, 프레임워크도 아니다. 이 배치는 문자 그대로 **읽기를 기다리며** 시간을 보냈다.
+- **읽기 전용 Job 인데 write IO 가 146.5 MiB 로 잡힌다.** 이 Job 은 한 행도 쓰지 않는다. 잡힌 것은 배치 메타데이터 커밋(2,001회, **양쪽 동일**)과 백그라운드 flush 이고, before 가 4배 큰
+  이유는 offset 의 대가가 아니라 **실행이 41배 길어서 그동안 서버가 다른 일을 flush 했기** 때문이다. 전역 카운터는 배율로 보라고 했지만, **이 항목은 배율로 봐도 틀린다.** 지표마다 어디까지
+  믿을 수 있는지가 다르다.
+- **체크섬이 완전히 같다** (`count=2000000, min=1, max=2000000, sum=2000001000000`). 페이징 방식을 바꿀 때 가장 흔한 사고는 느려지는 것이 아니라 **행을 건너뛰거나 중복해서 읽는 것**이다.
+  41배가 개선으로 읽히려면 이것이 먼저 서야 한다.
+- **키셋의 마지막 10페이지가 첫 10페이지보다 빨랐다** (2.2ms vs 3.5ms, 0.6배). 뒤로 갈수록 빨라질 이유는 없고, 앞 페이지에 JDBC·버퍼 풀 워밍업 비용이 실린 것이다. **평탄하다는 말은
+  "배율 1.0" 이 아니라 "페이지 번호가 시간을 설명하지 못한다" 는 뜻이다.**
+
 **측정 방법 두 가지.** Step 통계는 배치 메타데이터에서 읽는다.
 
 ```sql
@@ -425,8 +519,9 @@ FROM BATCH_STEP_EXECUTION s
 ORDER BY s.STEP_EXECUTION_ID DESC;
 ```
 
-쿼리 왕복 횟수와 디스크 write IO 는 배치가 모르는 값이므로 `DatabaseWorkloadListener` 가 Job 전후의
+쿼리 왕복 횟수와 디스크 write IO, **인덱스 스캔 행 수**(3번 문제의 주 지표)는 배치가 모르는 값이므로 `DatabaseWorkloadListener` 가 Job 전후의
 `SHOW GLOBAL STATUS` 차이를 로그로 남긴다. 모든 Job 에 같은 리스너를 맨 앞에 등록해 측정 범위를 Job 전체 (= after 의 인덱스 후생성 비용 포함)로 맞춘다.
 
 > 상태 카운터는 서버 전역이다. 다른 작업이 붙어 있지 않은 DB 에서 측정한다.
 > `INNODB_PAGES_WRITTEN` 은 백그라운드 flush 타이밍에 좌우되므로 절대값보다 before/after 배율로 본다.
+> `Innodb_rows_read` 대신 `Handler_read_next` 를 쓴다 — MariaDB 11.8.8 의 `SHOW GLOBAL STATUS` 에 전자가 없다.
