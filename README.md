@@ -45,7 +45,8 @@ CREATE TABLE member_x
 
 부가 테이블은 **after 개선안이 구조적으로 요구하는 경우에만** 추가한다 (2번 격리 테이블, 7번 Outbox 테이블). 그 외 문제는 주 테이블 1개로 끝낸다.
 
-실제 DDL은 `src/main/resources/schema.sql` 이다. **보조 인덱스는 거기에 없다.** 1번의 `email` UK·`grade`·`created_at` 인덱스, 5번의 `idempotency_key` UK, 6번의 `(grade, point)`
+실제 DDL은 `src/main/resources/schema.sql` 이다. **보조 인덱스는 거기에 없다.** 1번의 `email` UK·`grade`·`created_at` 인덱스, 5번의
+`idempotency_key` UK, 6번의 `(grade, point)`
 인덱스는 존재 여부와 생성 시점 자체가 before/after의 차이이므로 스키마가 아니라 프로파일이 제어한다. 해당 `ALTER TABLE` 문은 `schema.sql` 하단 주석에 모아 두었다.
 
 ## 준비
@@ -62,8 +63,8 @@ spring.sql.init.mode=always
 
 ### 2. 테스트 데이터 시딩
 
-`seedJob` 이 `member_b` ~ `member_g` 를 채운다. **대상 테이블 하나당 한 번 실행한다.** 6개를 한 Job의 6개 Step으로 묶지 않은 이유는, 200만 건 시딩이 실패해도 다른 테이블이 영향을 받지
-않아야 하기 때문이다.
+`seedJob` 이 `member_b` ~ `member_g` 를 채운다. **대상 테이블 하나당 한 번 실행한다.** 6개를 한 Job의 6개 Step으로 묶지 않은 이유는, 200만 건 시딩이 실패해도 다른
+테이블이 영향을 받지 않아야 하기 때문이다.
 
 ```bash
 SEED="--spring.batch.job.enabled=true --spring.batch.job.name=seedJob"
@@ -80,21 +81,22 @@ SEED="--spring.batch.job.enabled=true --spring.batch.job.name=seedJob"
 
 Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙인 인자는 Spring 설정으로 해석된다.
 
-| Job 파라미터 | 기본값        | 설명            |
-|--------------|---------------|-----------------|
-| `target`     | (필수)        | 대상 테이블     |
-| `count`      | 테이블별 규모 | 생성 건수       |
-| `chunkSize`  | `5000`        | 커밋 단위       |
-| `seed`       | `20260814`    | 난수 시드       |
+| Job 파라미터 | 기본값        | 설명        |
+|--------------|---------------|-------------|
+| `target`     | (필수)        | 대상 테이블 |
+| `count`      | 테이블별 규모 | 생성 건수   |
+| `chunkSize`  | `5000`        | 커밋 단위   |
+| `seed`       | `20260814`    | 난수 시드   |
 
 생략한 파라미터는 **직전 실행 값이 아니라 기본값**으로 해석된다. Spring Boot는 Job에 incrementer가 있으면 이전 실행의 파라미터를 물려준 뒤 CLI 인자를 덮는데, 그러면 `count` 를
 생략했을 때 이전 실행의 값이 조용히 상속되어 시딩 규모가 틀어진다. `run.id` 만 넘기는 incrementer를 따로 두어 막았다.
 
-적재되는 데이터는 `(target, count, seed)` 의 **순수 함수**다. `id` 까지 순번으로 직접 지정하므로 같은 파라미터면 언제나 같은 테이블이 된다. before/after가 문자 그대로 동일한 입력을 받는다는
-보장이 여기서 나온다. (`AUTO_INCREMENT` 에 맡기면 MariaDB 드라이버의 bulk INSERT와 InnoDB의 블록 단위 할당 때문에 `id` 에 구멍이 생겨, 4번 문제의 `referrer_id` 가
-실재하지 않는 행을 가리킬 수 있다.)
+적재되는 데이터는 `(target, count, seed)` 의 **순수 함수**다. `id` 까지 순번으로 직접 지정하므로 같은 파라미터면 언제나 같은 테이블이 된다. before/after가 문자 그대로 동일한
+입력을 받는다는 보장이 여기서 나온다. (`AUTO_INCREMENT` 에 맡기면 MariaDB 드라이버의 bulk INSERT와 InnoDB의 블록 단위 할당 때문에 `id` 에 구멍이 생겨, 4번 문제의
+`referrer_id` 가 실재하지 않는 행을 가리킬 수 있다.)
 
-대상 테이블이 비어 있지 않으면 `seedJob` 은 시작하지 않는다. 중복 시딩은 이후 모든 측정치를 무효하게 만든다. 다시 시딩하려면 `TRUNCATE TABLE member_x` 후 실행한다 (`TRUNCATE` 는
+대상 테이블이 비어 있지 않으면 `seedJob` 은 시작하지 않는다. 중복 시딩은 이후 모든 측정치를 무효하게 만든다. 다시 시딩하려면 `TRUNCATE TABLE member_x` 후 실행한다
+(`TRUNCATE` 는
 `AUTO_INCREMENT` 도 되돌리므로 같은 데이터가 재현된다).
 
 ## 실행
@@ -107,8 +109,9 @@ Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙�
 ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after  --spring.batch.job.name=insertJob'
 ```
 
-`--spring.batch.job.name` 으로 실행할 Job 하나만 지정한다. `application.properties` 의 `spring.batch.job.enabled=false` 때문에 기본 상태에서는 아무 Job도 실행되지
-않으므로, 실행할 때마다 `--spring.batch.job.enabled=true` 를 함께 넘긴다. 이 값을 켠 채로 Job 이름을 생략하면 컨텍스트의 **모든** Job이 실행되니 주의한다.
+`--spring.batch.job.name` 으로 실행할 Job 하나만 지정한다. `application.properties` 의 `spring.batch.job.enabled=false` 때문에 기본 상태에서는
+아무 Job도 실행되지 않으므로, 실행할 때마다 `--spring.batch.job.enabled=true` 를 함께 넘긴다. 이 값을 켠 채로 Job 이름을 생략하면 컨텍스트의 **모든** Job이 실행되니
+주의한다.
 
 ## 학습 목표: 7가지 실무 문제
 
@@ -303,7 +306,39 @@ Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙�
 
 각 문제를 실습할 때 아래 표를 채운다.
 
-| 문제 | Job         | 프로파일 | 총 소요 시간 | 쿼리/커밋 횟수 | CPU | IO | 비고 |
-|------|-------------|----------|--------------|----------------|-----|----|------|
-| 1    | `insertJob` | before   |              |                |     |    |      |
-| 1    | `insertJob` | after    |              |                |     |    |      |
+| 문제 | Job         | 프로파일 | 총 소요 시간                 | 쿼리/커밋 횟수                                                                                                  | CPU | IO                                                | 비고                                                                               |
+|------|-------------|----------|------------------------------|-----------------------------------------------------------------------------------------------------------------|-----|---------------------------------------------------|------------------------------------------------------------------------------------|
+| 1    | `insertJob` | before   | **211s** (Step, 4.7k rows/s) | INSERT 1,000,002 (**행당 1.0000**) / 커밋 10,001 / 메타데이터 UPDATE 20,006 + SELECT 10,007 = **총 왕복 104만** |     | **1,164 MiB** (44,534 pages, 행당 1,221 B)        | 인덱스 선생성 + `chunk(100)` + `JpaItemWriter`                                     |
+| 1    | `insertJob` | after    | **8s** (Job 전체, **26× ↓**) | INSERT 202 (**행당 0.0002**) / 커밋 201 / 메타데이터 UPDATE 406 + SELECT 207 = **총 왕복 1,024 (1,016× ↓)**     |     | **133 MiB** (8,104 pages, 행당 140 B, **8.7× ↓**) | 인덱스 후생성 + `chunk(5000)` + `JdbcBatchItemWriter` + `rewriteBatchedStatements` |
+
+### 1번 문제에서 읽어야 할 것
+
+- **왕복은 1,000배 줄었는데 IO 는 8.7배만 줄었다.** 100만 행의 데이터는 어느 쪽이든 디스크에 써야 한다. after 의 133 MiB 는 행 데이터 (약 100 MiB) + 인덱스 3개
+  구축분으로, 사실상 이론적 하한이다. 거꾸로 before 의 1,164 MiB 중 90%는 일 자체가 아니라 **일하는 방식의 대가**였다. 랜덤 인덱스 갱신이 같은 페이지를 반복해서 더럽히고, 1만 번의 커밋이
+  매번 로그를 flush 했다.
+- **청크 크기는 INSERT 만 묶는 것이 아니다.** 커밋마다 따라붙던 배치 메타데이터 왕복 (커밋당 UPDATE 2 + SELECT 1)이 30,013 → 613 으로 줄었다. 라이터를 바꿔서 얻은 것이
+  아니라 순전히 커밋 횟수의 효과다. 이 비용은 Step 통계에 잡히지 않아 놓치기 쉽다.
+- **`INSERT 202` 는 청크 200개당 문장 1개**다. `rewriteBatchedStatements=true` 가 5000행을 한 패킷에 담았다는 뜻이다. 이 옵션이 없으면
+  `JdbcBatchItemWriter` 를 써도 드라이버가 문장을 하나씩 보낸다.
+  <b>코드만 바꿔서는 개선되지 않는다.</b>
+- **인덱스 후생성 비용은 측정 해상도 아래였다.** after 의 Step 시간과 Job 시간이 둘 다 8초로, 100만 행에 인덱스 3개 (UK 포함)를 만드는 비용이 초 단위로는 드러나지 않는다. 정렬된
+  데이터를 한 번 훑어 구축하는 것과, 적재 내내 랜덤 위치를 갱신하는 것의 차이가 여기 있다. 어느 쪽이든 after 를 평가할 때는 Step 이 아니라 **Job 시간**을 봐야 공정하다 (before 는
+  인덱스를 빈 테이블에 만들므로 Step ≈ Job).
+
+**측정 방법 두 가지.** Step 통계는 배치 메타데이터에서 읽는다.
+
+```sql
+SELECT s.STEP_NAME,
+       s.READ_COUNT,
+       s.WRITE_COUNT,
+       s.COMMIT_COUNT,
+       TIMESTAMPDIFF(SECOND, s.START_TIME, s.END_TIME) AS SECONDS
+FROM BATCH_STEP_EXECUTION s
+ORDER BY s.STEP_EXECUTION_ID DESC;
+```
+
+쿼리 왕복 횟수와 디스크 write IO 는 배치가 모르는 값이므로 `DatabaseWorkloadListener` 가 Job 전후의
+`SHOW GLOBAL STATUS` 차이를 로그로 남긴다. 모든 Job 에 같은 리스너를 맨 앞에 등록해 측정 범위를 Job 전체 (= after 의 인덱스 후생성 비용 포함)로 맞춘다.
+
+> 상태 카운터는 서버 전역이다. 다른 작업이 붙어 있지 않은 DB 에서 측정한다.
+> `INNODB_PAGES_WRITTEN` 은 백그라운드 flush 타이밍에 좌우되므로 절대값보다 before/after 배율로 본다.
