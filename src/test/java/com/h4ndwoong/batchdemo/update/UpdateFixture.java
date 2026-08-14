@@ -27,8 +27,20 @@ import java.util.Map;
  */
 final class UpdateFixture {
 
-    /** 통합 테스트가 다룰 행 수. 청크 크기의 배수로 잡아 경계가 깔끔하게 떨어진다. */
+    /** 통합 테스트가 다룰 행 수. 청크 크기와 슬라이스 크기의 배수로 잡아 경계가 깔끔하게 떨어진다. */
     static final long COUNT = 20_000L;
+
+    /**
+     * 통합 테스트에서 쓸 슬라이스 크기.
+     *
+     * <p>기본값({@value UpdateJobCommonConfig#DEFAULT_SLICE_SIZE})은 100만 건을 20개로 자르는 값이라
+     * 2만 건짜리 축소판에서는 <b>슬라이스가 하나</b>가 되어 분할을 검증할 수 없다. 4개로 잘리도록
+     * 줄여 둔다.
+     */
+    static final long SLICE_SIZE = 5_000L;
+
+    /** {@code @SpringBootTest(properties = ...)} 에 그대로 넘길 표현. 애노테이션 인자라 상수여야 한다. */
+    static final String SLICE_SIZE_PROPERTY = "update.slice-size=5000";
 
     private UpdateFixture() {
     }
@@ -100,6 +112,15 @@ final class UpdateFixture {
             pointSum += member.getPoint();
         }
         return new GradeRecalcChecksum(COUNT, 0, pointSum, distribution);
+    }
+
+    /**
+     * {@link #SLICE_SIZE} 로 잘랐을 때 나오는 슬라이스 수. after 의 <b>왕복 횟수</b>이기도 하다.
+     *
+     * @return 슬라이스 수
+     */
+    static int sliceCount() {
+        return IdSlice.of(1, COUNT, SLICE_SIZE).size();
     }
 
     /**

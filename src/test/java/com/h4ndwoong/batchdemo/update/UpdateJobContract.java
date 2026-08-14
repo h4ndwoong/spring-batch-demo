@@ -29,11 +29,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 등급만 조용히 틀린다.</b>
  *
  * <p>두 프로파일이 갈라지는 지점(왕복 횟수, Step 통계의 의미)은 각 하위 클래스가 확인한다.
+ *
+ * <p><b>슬라이스 크기를 프로퍼티로 낮춰 둔 이유</b>는 {@link UpdateFixture#SLICE_SIZE} 에 적었다.
+ * before 는 이 값을 쓰지 않으므로 양쪽에 같은 프로퍼티를 줘도 무해하다.
  */
 @SpringBootTest(properties = {
         TestDatabase.URL,
         TestDatabase.BATCH_SCHEMA,
-        TestDatabase.DOMAIN_SCHEMA
+        TestDatabase.DOMAIN_SCHEMA,
+        UpdateFixture.SLICE_SIZE_PROPERTY
 })
 abstract class UpdateJobContract {
 
