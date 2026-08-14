@@ -2,6 +2,7 @@ package com.h4ndwoong.batchdemo.skip;
 
 import com.h4ndwoong.batchdemo.domain.MemberBase;
 import com.h4ndwoong.batchdemo.support.DatabaseWorkloadListener;
+import com.h4ndwoong.batchdemo.support.TableSeededValidator;
 import com.h4ndwoong.batchdemo.support.RunIdOnlyIncrementer;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.SkipListener;
@@ -11,6 +12,7 @@ import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.database.JdbcCursorItemReader;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -119,7 +121,7 @@ public class AfterSkipJobConfig {
     public Job skipJob(JobRepository jobRepository,
                        Step skipStep,
                        DatabaseWorkloadListener workloadListener,
-                       MemberBSeededValidator seededValidator) {
+                       @Qualifier("memberBSeededValidator") TableSeededValidator seededValidator) {
         return new JobBuilder("skipJob", jobRepository)
                 .incrementer(new RunIdOnlyIncrementer())
                 .listener(workloadListener)

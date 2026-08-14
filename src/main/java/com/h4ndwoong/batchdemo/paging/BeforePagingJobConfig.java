@@ -2,6 +2,7 @@ package com.h4ndwoong.batchdemo.paging;
 
 import com.h4ndwoong.batchdemo.domain.MemberBase;
 import com.h4ndwoong.batchdemo.support.DatabaseWorkloadListener;
+import com.h4ndwoong.batchdemo.support.TableSeededValidator;
 import com.h4ndwoong.batchdemo.support.RunIdOnlyIncrementer;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
@@ -9,6 +10,7 @@ import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -75,7 +77,7 @@ public class BeforePagingJobConfig {
     public Job pagingJob(JobRepository jobRepository,
                          Step pagingStep,
                          DatabaseWorkloadListener workloadListener,
-                         MemberCSeededValidator seededValidator) {
+                         @Qualifier("memberCSeededValidator") TableSeededValidator seededValidator) {
         return new JobBuilder("pagingJob", jobRepository)
                 .incrementer(new RunIdOnlyIncrementer())
                 .listener(workloadListener)

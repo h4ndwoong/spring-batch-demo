@@ -3,6 +3,7 @@ package com.h4ndwoong.batchdemo.paging;
 import com.h4ndwoong.batchdemo.domain.MemberBase;
 import com.h4ndwoong.batchdemo.domain.MemberC;
 import com.h4ndwoong.batchdemo.support.MemberRowMapper;
+import com.h4ndwoong.batchdemo.support.TableSeededValidator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -77,12 +78,17 @@ public class PagingJobCommonConfig {
     /**
      * {@code member_c} 에 읽을 데이터가 있는지 확인하는 리스너.
      *
+     * <p>3번의 이 리스너가 남긴 약속("4번 문제에서 셋째가 생기면 테이블과 메시지를 주입받는 공용
+     * 리스너로 뽑는다")을 4번에서 지켰다. {@link TableSeededValidator} 가 그 결과다.
+     *
      * @param jdbcTemplate JDBC 템플릿
      * @return 리스너
      */
     @Bean
-    public MemberCSeededValidator memberCSeededValidator(JdbcTemplate jdbcTemplate) {
-        return new MemberCSeededValidator(jdbcTemplate);
+    public TableSeededValidator memberCSeededValidator(JdbcTemplate jdbcTemplate) {
+        return new TableSeededValidator(jdbcTemplate, "member_c",
+                "3번 문제는 200만 건을 전량 순회하며 페이지당 소요 시간을 재는 실습이므로 읽을 데이터가 "
+                        + "없으면 측정이 성립하지 않는다 (0건 순회는 before 도 즉시 끝나서 개선과 구분되지 않는다).");
     }
 
     /**

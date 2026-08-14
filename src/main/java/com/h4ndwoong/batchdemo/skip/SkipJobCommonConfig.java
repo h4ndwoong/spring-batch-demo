@@ -3,6 +3,7 @@ package com.h4ndwoong.batchdemo.skip;
 import com.h4ndwoong.batchdemo.domain.MemberB;
 import com.h4ndwoong.batchdemo.domain.MemberBase;
 import com.h4ndwoong.batchdemo.support.MemberRowMapper;
+import com.h4ndwoong.batchdemo.support.TableSeededValidator;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.item.database.JdbcBatchItemWriter;
 import org.springframework.batch.item.database.JdbcCursorItemReader;
@@ -70,12 +71,17 @@ public class SkipJobCommonConfig {
     /**
      * {@code member_b} 에 읽을 데이터가 있는지 확인하는 리스너.
      *
+     * <p>같은 판단을 하는 리스너가 3번({@code member_c})·4번({@code member_d})에도 있어
+     * {@link TableSeededValidator} 로 뽑았다. 여기 남는 것은 <b>테이블과 실패 메시지</b>뿐이다.
+     *
      * @param jdbcTemplate JDBC 템플릿
      * @return 리스너
      */
     @Bean
-    public MemberBSeededValidator memberBSeededValidator(JdbcTemplate jdbcTemplate) {
-        return new MemberBSeededValidator(jdbcTemplate);
+    public TableSeededValidator memberBSeededValidator(JdbcTemplate jdbcTemplate) {
+        return new TableSeededValidator(jdbcTemplate, "member_b",
+                "2번 문제는 오염 행이 섞인 10만 건을 읽는 실습이므로 읽을 데이터가 없으면 측정이 "
+                        + "성립하지 않는다 (0건 처리도 COMPLETED 로 끝나서 성공과 구분되지 않는다).");
     }
 
     /**
