@@ -45,18 +45,70 @@ CREATE TABLE member_x
 
 부가 테이블은 **after 개선안이 구조적으로 요구하는 경우에만** 추가한다 (2번 격리 테이블, 7번 Outbox 테이블). 그 외 문제는 주 테이블 1개로 끝낸다.
 
-### 실행
+실제 DDL은 `src/main/resources/schema.sql` 이다. **보조 인덱스는 거기에 없다.** 1번의 `email` UK·`grade`·`created_at` 인덱스, 5번의 `idempotency_key` UK, 6번의 `(grade, point)`
+인덱스는 존재 여부와 생성 시점 자체가 before/after의 차이이므로 스키마가 아니라 프로파일이 제어한다. 해당 `ALTER TABLE` 문은 `schema.sql` 하단 주석에 모아 두었다.
+
+## 준비
+
+### 1. 스키마 적용
+
+`schema.sql` 은 외부 DB에서 자동 실행되지 않는다 (`spring.sql.init.mode` 기본값이 `embedded`). `application.properties` 에 아래를 추가한다.
+
+```properties
+spring.sql.init.mode=always
+```
+
+모든 DDL이 `IF NOT EXISTS` 라서 매 기동마다 실행되어도 안전하다.
+
+### 2. 테스트 데이터 시딩
+
+`seedJob` 이 `member_b` ~ `member_g` 를 채운다. **대상 테이블 하나당 한 번 실행한다.** 6개를 한 Job의 6개 Step으로 묶지 않은 이유는, 200만 건 시딩이 실패해도 다른 테이블이 영향을 받지
+않아야 하기 때문이다.
+
+```bash
+SEED="--spring.batch.job.enabled=true --spring.batch.job.name=seedJob"
+
+./gradlew bootRun --args="$SEED target=member_b"   #  10만 건 (오염 행 500건 포함)
+./gradlew bootRun --args="$SEED target=member_c"   # 200만 건
+./gradlew bootRun --args="$SEED target=member_d"   #  50만 건 (모든 행이 referrer_id 보유)
+./gradlew bootRun --args="$SEED target=member_e"   #  30만 건
+./gradlew bootRun --args="$SEED target=member_f"   # 100만 건
+./gradlew bootRun --args="$SEED target=member_g"   #  10만 건
+```
+
+`member_a` 는 시딩 대상이 아니다. "비어 있는 `member_a` 에 100만 건 적재"가 1번 문제의 측정 대상이므로 `insertJob` 이 데이터를 생성하며 직접 적재한다.
+
+Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙인 인자는 Spring 설정으로 해석된다.
+
+| Job 파라미터 | 기본값        | 설명            |
+|--------------|---------------|-----------------|
+| `target`     | (필수)        | 대상 테이블     |
+| `count`      | 테이블별 규모 | 생성 건수       |
+| `chunkSize`  | `5000`        | 커밋 단위       |
+| `seed`       | `20260814`    | 난수 시드       |
+
+생략한 파라미터는 **직전 실행 값이 아니라 기본값**으로 해석된다. Spring Boot는 Job에 incrementer가 있으면 이전 실행의 파라미터를 물려준 뒤 CLI 인자를 덮는데, 그러면 `count` 를
+생략했을 때 이전 실행의 값이 조용히 상속되어 시딩 규모가 틀어진다. `run.id` 만 넘기는 incrementer를 따로 두어 막았다.
+
+적재되는 데이터는 `(target, count, seed)` 의 **순수 함수**다. `id` 까지 순번으로 직접 지정하므로 같은 파라미터면 언제나 같은 테이블이 된다. before/after가 문자 그대로 동일한 입력을 받는다는
+보장이 여기서 나온다. (`AUTO_INCREMENT` 에 맡기면 MariaDB 드라이버의 bulk INSERT와 InnoDB의 블록 단위 할당 때문에 `id` 에 구멍이 생겨, 4번 문제의 `referrer_id` 가
+실재하지 않는 행을 가리킬 수 있다.)
+
+대상 테이블이 비어 있지 않으면 `seedJob` 은 시작하지 않는다. 중복 시딩은 이후 모든 측정치를 무효하게 만든다. 다시 시딩하려면 `TRUNCATE TABLE member_x` 후 실행한다 (`TRUNCATE` 는
+`AUTO_INCREMENT` 도 되돌리므로 같은 데이터가 재현된다).
+
+## 실행
 
 ```bash
 # before 재현
-./gradlew bootRun --args='--spring.profiles.active=before --spring.batch.job.name=insertJob'
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=insertJob'
 
 # after 개선
-./gradlew bootRun --args='--spring.profiles.active=after  --spring.batch.job.name=insertJob'
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after  --spring.batch.job.name=insertJob'
 ```
 
-`--spring.batch.job.name` 으로 실행할 Job 하나만 지정한다. Job 이름을 지정하지 않으면 아무 Job도 실행되지 않도록 둔다 (`spring.batch.job.enabled=false`
-기본).
+`--spring.batch.job.name` 으로 실행할 Job 하나만 지정한다. `application.properties` 의 `spring.batch.job.enabled=false` 때문에 기본 상태에서는 아무 Job도 실행되지
+않으므로, 실행할 때마다 `--spring.batch.job.enabled=true` 를 함께 넘긴다. 이 값을 켠 채로 Job 이름을 생략하면 컨텍스트의 **모든** Job이 실행되니 주의한다.
 
 ## 학습 목표: 7가지 실무 문제
 
