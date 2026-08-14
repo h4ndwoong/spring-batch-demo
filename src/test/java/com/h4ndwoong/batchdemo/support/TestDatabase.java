@@ -20,6 +20,16 @@ public final class TestDatabase {
     public static final String URL =
             "spring.datasource.url=jdbc:mariadb://localhost:3307/batch_demo_test?createDatabaseIfNotExist=true";
 
+    /**
+     * 배치 묶음을 켠 URL. {@code application-after.properties} 와 같은 설정이다.
+     *
+     * <p>테스트의 인라인 프로퍼티가 프로파일 설정 파일보다 우선하므로, after 프로파일을 켜는 것만으로는
+     * 이 옵션이 적용되지 않는다. after 의 왕복 횟수를 재는 테스트는 실행 환경과 같은 URL 을 써야 한다.
+     */
+    public static final String URL_WITH_BATCH_REWRITE =
+            "spring.datasource.url=jdbc:mariadb://localhost:3307/batch_demo_test"
+                    + "?createDatabaseIfNotExist=true&rewriteBatchedStatements=true";
+
     /** Spring Batch 메타데이터 테이블을 생성한다. */
     public static final String BATCH_SCHEMA = "spring.batch.jdbc.initialize-schema=always";
 
