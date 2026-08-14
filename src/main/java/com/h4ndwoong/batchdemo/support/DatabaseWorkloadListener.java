@@ -57,6 +57,31 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
      */
     public static final String BULK_STATEMENTS = "COM_STMT_BULK_EXECUTE";
 
+    /**
+     * 인덱스 순서로 "다음 행" 을 읽은 횟수. <b>3번 문제(offset 페이징)의 주 지표</b>다.
+     *
+     * <p>3번의 before/after 는 쿼리 <em>수</em>가 같다. {@code LIMIT 1000 OFFSET 1999000} 도
+     * {@code WHERE id > ? LIMIT 1000} 도 SELECT 한 번이다. 다른 것은 그 한 번이 <b>몇 행을 읽고
+     * 버리는가</b> 이고, 그 값은 배치도 애플리케이션 로그도 모른다. 이 카운터만 안다.
+     * <ul>
+     *   <li>offset — 전체 순회에 N²/(2×페이지크기) 행. 200만 건·1,000행 페이지면 약 20억</li>
+     *   <li>키셋 — N 행. 200만</li>
+     * </ul>
+     *
+     * <p>{@code Innodb_rows_read} 를 쓰지 않은 이유는 MariaDB 11.8.8 의 {@code SHOW GLOBAL STATUS}
+     * 에 그 변수가 없기 때문이다. {@code Handler_*} 계열은 스토리지 엔진과 무관하게 서버가 세므로
+     * 항상 있다.
+     */
+    public static final String ROWS_SCANNED = "HANDLER_READ_NEXT";
+
+    /**
+     * 인덱스를 타지 않고 다음 행을 읽은 횟수(풀 스캔).
+     *
+     * <p>{@link #ROWS_SCANNED} 와 함께 본다. 이 값이 크면 의도한 인덱스를 안 타고 있다는 뜻이라,
+     * 측정하려던 것과 다른 것을 재고 있을 수 있다.
+     */
+    public static final String ROWS_SCANNED_NO_INDEX = "HANDLER_READ_RND_NEXT";
+
     /** 디스크에 쓴 페이지 수. */
     public static final String PAGES_WRITTEN = "INNODB_PAGES_WRITTEN";
 
@@ -65,11 +90,12 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
 
     /**
      * 읽을 카운터. 1번 문제만이 아니라 7문제 전부의 지표를 한 벌로 모은다.
-     * 6번(대량 UPDATE)은 {@code COM_UPDATE}, 4번(N+1 조회)은 {@code COM_SELECT} 가 주 지표다.
+     * 6번(대량 UPDATE)은 {@code COM_UPDATE}, 4번(N+1 조회)은 {@code COM_SELECT},
+     * 3번(offset 페이징)은 {@link #ROWS_SCANNED} 가 주 지표다.
      */
     private static final List<String> COUNTERS = List.of(
             INSERT_STATEMENTS, BULK_STATEMENTS, "COM_UPDATE", "COM_SELECT", "COM_COMMIT",
-            PAGES_WRITTEN, BYTES_WRITTEN);
+            ROWS_SCANNED, ROWS_SCANNED_NO_INDEX, PAGES_WRITTEN, BYTES_WRITTEN);
 
     /**
      * {@code information_schema.GLOBAL_STATUS} 가 아니라 {@code SHOW GLOBAL STATUS} 를 쓴다.
