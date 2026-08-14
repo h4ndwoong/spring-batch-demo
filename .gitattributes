@@ -1,0 +1,18 @@
+* text eol=lf
+
+*.bat           text eol=crlf
+
+*.css           diff=css
+*.htm           diff=html
+*.html          diff=html
+*.md            diff=markdown
+
+*.jar           binary
+*.png           binary
+*.webp          binary
+*.otf           binary
+*.eot           binary
+*.ttf           binary
+*.woff          binary
+*.woff2         binary
+*.ico           binary
