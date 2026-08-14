@@ -213,7 +213,15 @@ CREATE TABLE IF NOT EXISTS member_g_outbox
 --                 실제로 쓰는 코드가 있을 때만 산다.
 --      ALTER TABLE member_e ADD UNIQUE KEY uk_member_e_idem (idempotency_key);
 --
---  6번 member_f : after 의 집합 UPDATE 조건 경로. before 는 PK 단건 UPDATE 라 무관.
+--  6번 member_f : 설계 단계에서는 "after 의 집합 UPDATE 조건 경로" 로 예고했으나, 구현하며 역할이
+--                 바뀌었다. after 를 id 슬라이스 + CASE 한 문장으로 짜면 PK 범위를 슬라이스당 한 번
+--                 지나가면 끝이라 이 인덱스를 타지 않는 편이 빠르다 (전이쌍별 문장으로 나눠야 타는데,
+--                 그러면 같은 인덱스 구간을 슬라이스마다 반복해서 훑는다). 인덱스로 대상을 좁히는
+--                 것이 이득인 경우는 갱신 대상이 희소할 때이고, 6번은 전체의 75% 가 바뀌는 전량
+--                 재계산이다. 그래서 이것은 조건 경로가 아니라 부록 측정의 대상이다 —
+--                 "갱신하는 컬럼 위의 인덱스가 대량 UPDATE 를 얼마나 비싸게 만드는가"
+--                 (1번의 인덱스 유지 비용을 UPDATE 로 옮긴 질문). GradePointIndexListener 가
+--                 --update.grade-point-index 프로퍼티를 보고 양쪽 프로파일에서 만들거나 지운다.
 --      ALTER TABLE member_f ADD KEY idx_member_f_grade_point (grade, point);
 --
 -- 실습 리셋 (수동 실행. 매 기동 시 데이터가 날아가면 안 되므로 이 파일에 두지 않는다)

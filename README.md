@@ -122,7 +122,7 @@ Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙�
 | 3 | offset 페이징 함정                             | `member_c` | `pagingJob`  | 뒤 페이지로 갈수록 페이지당 시간 선형 증가 | 키셋(ZeroOffset) 페이징                   |
 | 4 | Processor N+1 조회, 청크 사이즈                | `member_d` | `lookupJob`  | 행당 2회 조회 → 왕복 100만 회              | 청크 단위 IN 일괄 조회 (왕복 2,000× ↓)    |
 | 5 | 재시작(restart) 멱등성                         | `member_e` | `restartJob` | 재시작은 통과하고 **재실행에서** 이중 소멸 | process indicator + 멱등키 UK             |
-| 6 | 대량 UPDATE 쓰기 경로                          | `member_f` | `updateJob`  | 행별 UPDATE 반복 (bulk 미적용)             | 집합 UPDATE / `useBulkStmts`              |
+| 6 | 대량 UPDATE 쓰기 경로                          | `member_f` | `updateJob`  | 갱신 행마다 UPDATE 문 1개 (묶이지 않는다)  | `id` 범위 슬라이스 + `CASE` 집합 UPDATE   |
 | 7 | 외부 통보와 트랜잭션 경계                      | `member_g` | `outboxJob`  | 롤백 시 유령 알림, 재실행 시 중복 발송     | Outbox 패턴 + 멱등키                      |
 
 ---
@@ -564,19 +564,131 @@ TRUNCATE TABLE member_e;
 | Job    | `updateJob` → `updateStep` (Step 1개) |
 | 데이터 | 100만 건 전체 등급 재계산             |
 
-**시나리오** — 조건에 따라 `member_f` 의 `grade` / `updated_at` 을 일괄 갱신한다.
+**시나리오** — `member_f` 100만 건의 등급을 포인트로 다시 매긴다. 등급 규칙은 4번과 같은 `GradePolicy` (포인트 분포의 사분위)이고, 시드의 등급은 포인트와 무관한 해시라 **약 75%가 바뀐다.** 두 프로파일이 갱신하는 행은 같아야 하며, 다른 것은 **그 갱신을 몇 개의 문장에 나눠 담는가** 하나뿐이다.
 
 **before**
 
-- 읽은 행마다 `UPDATE member_f SET ... WHERE id = ?` 개별 실행
-- JDBC batch가 실제로 묶이지 않아 왕복 횟수가 행 수와 동일
+- 전량을 커서로 읽고, 프로세서가 등급을 계산하고, 바뀐 행마다 `UPDATE member_f SET grade = ?, updated_at = ? WHERE id = ?`
+- `JdbcBatchItemWriter` 를 쓰는데도 묶이지 않는다 — **문장 수 = 갱신 행 수**
+- `READ = WRITE + FILTER` (등급이 이미 옳던 약 25만 행은 쓰지 않는다)
 
 **after**
 
-- 조건 기반 **집합 UPDATE** (`UPDATE member_f SET grade = ... WHERE grade = ... AND point BETWEEN ...`)
-- 행 단위가 불가피한 경우 `JdbcBatchItemWriter` + `rewriteBatchedStatements=true` / `useBulkStmts=true`
+- 회원을 **한 행도 읽지 않는다.** 리더가 발행하는 것은 `id` 구간(슬라이스)이고, 라이터가 구간마다 집합 UPDATE 한 문장을 보낸다
 
-**측정 지표** — UPDATE 문 실행 횟수, 네트워크 왕복 횟수, 총 소요 시간, 락 유지 시간
+```sql
+UPDATE member_f
+SET grade = CASE WHEN point >= :fromVIP THEN 'VIP' ... ELSE 'BRONZE' END,
+    updated_at = :now
+WHERE id BETWEEN :fromId AND :toId
+  AND grade <> CASE WHEN point >= :fromVIP THEN 'VIP' ... ELSE 'BRONZE' END
+```
+
+- `WHERE` 절의 같은 `CASE` 식이 before 의 프로세서 필터에 대응한다. 이것이 없으면 구간의 모든 행이 갱신되어 **일의 양이 달라진다**
+- 등급 규칙이 자바와 SQL 두 곳에 존재하게 되므로, `CASE` 식은 손으로 쓰지 않고 `GradePolicy` 의 임계값 목록에서 **생성**한다 (`GradeCaseExpression`)
+
+**측정 지표** — **UPDATE 문 실행 횟수**(`COM_UPDATE`, 주 지표), **갱신 행 수**(`HANDLER_UPDATE`, 양쪽이 같아야 한다), 총 소요 시간, **슬라이스별 문장 시간**(= 락 유지 시간의 상한), 등급 분포 체크섬
+
+### 대사식
+
+```
+등급 분포·갱신 행 수·포인트 총합   before = after                     완전히 동일
+갱신 행 수 (HANDLER_UPDATE)        before = after                     일의 양은 같다
+문장 수 (COM_UPDATE)               before ≈ 갱신 행 수 / after = 슬라이스 수
+재실행                             양쪽 다 갱신 0행 (자연 멱등)
+```
+
+**5번과 비교 축이 다시 90도 다르다.** 5번은 *같은 프로파일의 서로 다른 실행*이 같은 답을 내는지를 봤다. 6번은 4번처럼 *before 와 after* 가 같은 답을 냈는지를 보되, 4번이 **읽기**의 왕복이었던 자리에 **쓰기**의 문장 수가 들어간다.
+
+**Job 파라미터·프로퍼티**
+
+| 이름 | 종류 | 기본값 | 적용 | 설명 |
+|------|------|--------|------|------|
+| `run.id` | Job 파라미터 (식별) | incrementer 가 부여 | 양쪽 | 이 배치는 자연 멱등이라 재시작을 다루지 않는다 |
+| `--update.slice-size` | 프로퍼티 | `50000` | after | 슬라이스 하나가 덮을 `id` 개수. **`0` 이면 한 문장이 전 구간을 잠근다** |
+| `--update.grade-point-index` | 프로퍼티 | `false` | **양쪽** | `(grade, point)` 인덱스를 둔 상태로 잴지 여부 (부록 C) |
+
+**1~5번과 달리 after 가 모든 항목에서 이기지 않는다.** 집합 UPDATE 는 문장 수를 없애는 대신 **락 단위를 키운다.** before 는 청크(1,000행)마다 커밋해 락을 놓아주지만, 슬라이스 하나는 통째로 한 트랜잭션이다. 그래서 6번에는 다이얼이 있다.
+
+```
+slice-size = 0        문장 1개        한 문장이 100만 행을 잠근다     ← 락 최악
+slice-size = 50,000   문장 20개       한 문장이 5만 행을 잠근다       ← 기본값
+slice-size = 1,000    문장 1,000개    before 와 같은 락 단위          ← 문장 수 최악에 근접
+```
+
+최적점은 "가능한 최대" 가 아니라 두 곡선이 교차하는 지점이며, 그 판단은 배치가 도는 시간대에 그 테이블을 누가 함께 쓰는가에 달려 있다.
+
+**실행**
+
+```bash
+# 0. 시딩 (한 번만, 100만 건). member_f 가 비어 있으면 updateJob 은 시작하지 않는다.
+./gradlew bootRun --args="--spring.batch.job.enabled=true --spring.batch.job.name=seedJob target=member_f"
+
+# before / after
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=updateJob'
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after  --spring.batch.job.name=updateJob'
+
+# 부록 A — 코드는 그대로, 연결 설정만 바꾼다 (프로파일이 아니라 CLI 덮어쓰기)
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=updateJob --spring.datasource.url=jdbc:mariadb://localhost:3307/batch_demo?useBulkStmts=true'
+
+# 부록 B — 슬라이스 크기 축 (문장 수 대 락 유지 시간)
+./gradlew bootRun --args='... --spring.profiles.active=after --spring.batch.job.name=updateJob --update.slice-size=0'
+
+# 부록 C — 갱신 대상 컬럼 위의 인덱스 비용 (양쪽에서 각각)
+./gradlew bootRun --args='... --update.grade-point-index=true'
+
+# 슬라이스별 문장 시간 그래프의 원자료
+./gradlew bootRun --args='...' | grep -o 'SLICE_UPDATE,.*' > data/update-after.csv
+```
+
+> **부록 A 는 기대와 다르게 끝난다.** 1번 문제는 `rewriteBatchedStatements=true` 라는 연결 설정 하나로 INSERT 왕복을 1,016배 줄였다. UPDATE 판인 `useBulkStmts=true` 도 같은 일을 해 줄 것 같지만, **`COM_UPDATE` 는 751,726 에서 꿈쩍도 하지 않는다.** 100만 건 실측에서 문장 수는 before 와 완전히 같았고 시간만 37.8s → 24.0s (1.57배) 로 줄었다. 드라이버가 묶은 것은 **패킷**이고 서버는 여전히 행 수만큼의 문장을 실행한다. (MariaDB 11.8.8 의 `SHOW GLOBAL STATUS` 에는 `Com_stmt_bulk_execute` 자체가 없다. 2만 행 프로브에서는 `Com_stmt_execute` 가 20,000 늘어 그 경로가 확인된다.) **연결 설정으로 살 수 있는 것은 1.57배이고, 문장을 바꾸면 4.7배다.**
+
+**리셋은 재시딩이다.** 이 배치는 `grade` 를 파괴하고, 시드의 등급은 순번 해시라 SQL 로 되돌릴 수 없다 (5번의 포인트와 같은 사정이다). **before 를 돌린 뒤 after 를 측정하기 전에 반드시 다시 시딩한다.**
+
+```sql
+TRUNCATE TABLE member_f;
+-- 이어서 seedJob target=member_f
+```
+
+**2만 건 축소판** — `UpdateJobContract` / `BeforeUpdateJobTest` / `AfterUpdateJobTest` / `BulkStatementsUpdateTest` / `AfterUpdateSliceSizeTest` 가 고정한다.
+
+| | before | after |
+|---|---|---|
+| Step `READ / WRITE` | 20,000 / 갱신 행 수 | **슬라이스 수 / 슬라이스 수** |
+| 문장 수 (`COM_UPDATE`) | ≥ 갱신 행 수 | < 갱신 행 수의 1% |
+| 갱신 행 수 | 같다 | 같다 |
+| 체크섬 (분포·갱신 행·포인트 합) | 같다 | 같다 |
+| 재실행 | 갱신 0행 | 갱신 0행 |
+
+**100만 건 실측** (갱신 대상 749,719행 = 전체의 75.0%)
+
+| | before | after |
+|---|---|---|
+| Step 시간 | **37.8s** | **8.1s** (**4.7× ↓**) |
+| Step `READ / WRITE / FILTER` | 1,000,000 / 749,719 / 250,281 | **20 / 20 / 0** |
+| 커밋 | 1,001 | **21** |
+| UPDATE 문 수 (`COM_UPDATE`) | **751,726** (행당 1.0000) | **46** (**16,342× ↓**) |
+| 갱신 행 수 (`HANDLER_UPDATE`) | 751,726 | **749,745** (**같다**) |
+| 인덱스 탐색 (`HANDLER_READ_KEY`) | 2,752,733 | 2,000,073 (차이 752,660 = 행마다 PK 재탐색) |
+| 스캔 행 (`HANDLER_READ_NEXT`) | 1,000,002 | **1,000,002** (동일) |
+| write IO | 297.3 MiB | 229.3 MiB |
+| **락 유지 시간 상한** | ~37.7ms (청크 1,000행) | **401.7ms** (슬라이스 5만행, **10.6× ↑**) |
+| 체크섬 | `changed=749719, BRONZE=249572 SILVER=250621 GOLD=249746 VIP=250061, pointSum=50014922196` | **완전히 동일** |
+
+**부록 실측**
+
+| 실행 | Step 시간 | UPDATE 문 수 | 락 유지 시간 상한 | write IO |
+|---|---|---|---|---|
+| before | 37.8s | 751,726 | ~37.7ms | 297.3 MiB |
+| before + `useBulkStmts=true` | **24.0s** | **751,726 (그대로)** | ~24.0ms | 341.0 MiB |
+| before + `(grade, point)` 인덱스 | **45.1s** | 751,726 | ~45.0ms | **1,830.7 MiB** |
+| after (`slice-size=50000`) | 8.1s | 46 | 401.7ms | 229.3 MiB |
+| after + `slice-size=0` | **8.4s** | **8** | **7,866ms** (**19.6× ↑**) | 281.3 MiB |
+| after + `(grade, point)` 인덱스 | **14.0s** | 46 | 750.0ms | **1,291.6 MiB** (**5.6× ↑**) |
+| after 재실행 (전부 이미 옳음) | **1.1s** | 46 | 21.5ms | 0.0 MiB |
+| before 재실행 (전부 이미 옳음) | **8.5s** | 2,007 | — | 0.0 MiB |
+
+슬라이스 20장의 문장 시간: 356.5ms ~ 401.7ms, 평균 370.7ms (`data/update-after.csv`).
 
 ---
 
@@ -623,6 +735,8 @@ TRUNCATE TABLE member_e;
 | 4    | `lookupJob` | after           | **8.8s** (Step, **21.6× ↓**)     | SELECT **1,009** (**992× ↓**) / 커밋 509 / **인덱스 탐색 498,107 (2.0× ↓)**                                      |     | **0.0 MiB**                                       | 청크(1,000)당 `IN` 1회 = **왕복 500회**. 체크섬은 before 와 완전히 동일          |
 | 5    | `restartJob` | before          | 실행1 **7.2s** / 실행2 6.5s / 실행3 **11.5s**   | UPDATE 285,540 (실행3) / 커밋 150+135+285 / 롤백 1                                                              |     | 70.1 MiB (실행1)                                  | 실행3에서 **전량 재차감**. 총합 14,446,608,219, 음수 잔액 5,646행               |
 | 5    | `restartJob` | after           | 실행1 7.3s / 실행2 6.7s / 실행3 **0.14s**       | UPDATE **6** (실행3) / 커밋 150+135+1 / 롤백 1                                                                  |     | 60.3 MiB (실행1)                                  | 실행3 `READ_COUNT=0`. 총합 14,731,573,219 로 **실행2와 완전히 동일**            |
+| 6    | `updateJob` | before          | **37.8s** (Step, 26.5k rows/s)   | UPDATE **751,726** (**행당 1.0000**) / 커밋 1,001 / 갱신 행 751,726 / 인덱스 탐색 2,752,733                       |     | 297.3 MiB                                         | `READ 1,000,000 = WRITE 749,719 + FILTER 250,281`. 락 단위는 청크(1,000행)      |
+| 6    | `updateJob` | after           | **8.1s** (Step, **4.7× ↓**)      | UPDATE **46** (**16,342× ↓**) / 커밋 21 / 갱신 행 **749,745 (before 와 같다)** / 인덱스 탐색 2,000,073            |     | 229.3 MiB                                         | 슬라이스 20개. 체크섬 동일. **락 유지 시간 401.7ms 로 10.6배 악화 (지는 항목)**  |
 
 ### 1번 문제에서 읽어야 할 것
 
@@ -699,6 +813,18 @@ TRUNCATE TABLE member_e;
 - **음수 잔액은 두 프로파일을 가르지 않는다. 그 개수가 가른다.** 잔액을 검사하지 않으므로 정상적인 1회 차감에서도 음수는 2,827행 생긴다. before 는 재실행 뒤 5,646행이 된다. 즉 **"음수 잔액이 있는가" 로 감시하면 이 사고를 잡지 못한다.** 그리고 총합을 나중에 되돌려도 그 행들의 이력은 복구되지 않는다 — 잘못된 배치의 피해는 집계값이 아니라 개별 행에 있다.
 - **같은 값이 아니라 같은 타입의 같은 값이어야 같은 인스턴스다.** 이 실습을 처음 측정할 때 `run.id=2` 를 그대로 넘겨서, 재시작이어야 할 실행이 String 파라미터로 변환되어 **새 인스턴스로 돌았다.** 앞 15만 건이 조용히 두 번 차감됐고, 경고는 로그의 `type=class java.lang.String` 한 조각뿐이었으며 배치는 `COMPLETED` 로 끝났다. **재시작 실패는 오류처럼 보이지 않는다 — 성공한 재실행처럼 보인다.** 그래서 `failAfterCount` 를 비식별 파라미터로 둔다. JobInstance 의 정체성에 "어떻게 실행할 것인가" 가 섞이는 순간 같은 사고가 난다.
 - **멱등키 UK 는 마지막 그물이지 정문이 아니다.** 순차 재실행에서 이중 차감을 실제로 막는 것은 읽기 조건 `processed = 0` 과 쓰기 조건 `WHERE id = ? AND processed = 0` 이다. 같은 행에 같은 키를 다시 쓰는 것은 **자기 자신과의 충돌**이라 UNIQUE 제약에 걸리지 않는다. UK 가 막는 것은 *서로 다른 두 행이 같은 키를 갖는 상황*, 즉 키 생성 규칙이 틀려 처리 이력이 조용히 거짓이 되는 경우다. 그리고 before 에 이 UK 를 걸어 보면 **아무것도 막지 못한다** — 값이 전부 `NULL` 이고 `NULL` 은 UNIQUE 를 통과하기 때문이다. "UK 를 걸었는데 왜 안 막히죠" 의 정체가 이것이고, 제약은 **그 컬럼에 실제로 쓰는 코드가 있을 때만** 산다.
+
+### 6번 문제에서 읽어야 할 것
+
+- **문장 수는 16,342배 줄었는데 시간은 4.7배다.** 그리고 `HANDLER_UPDATE` 는 751,726 대 749,745 로 사실상 같다 — **DB 가 갱신한 행은 한 건도 줄지 않았다.** 4번에서 "조회 요구는 양쪽 다 499,999" 였던 것과 같은 자리이지만 배율의 간극이 훨씬 크다(4번은 왕복 2,000× 에 시간 21.6×, 여기는 문장 16,342× 에 시간 4.7×). **쓰기는 읽기와 달리 "일 자체" 가 비용의 대부분**이기 때문이다. 75만 행을 고치고 로그에 쓰고 페이지를 더럽히는 일은 문장을 아무리 줄여도 남는다. 개선의 상한이 어디인지를 이 두 숫자가 알려준다.
+- **1번의 해결책이 여기서는 듣지 않는다.** `useBulkStmts=true` 를 켜도 `COM_UPDATE` 는 751,726 그대로였다. 줄어든 것은 시간(37.8s → 24.0s, 1.57배)뿐이고, 그것은 **드라이버가 패킷을 묶었기 때문이지 서버의 문장이 줄어서가 아니다.** 1번에서 `rewriteBatchedStatements=true` 한 줄이 INSERT 왕복을 1,016배 줄였던 경험이 여기서 함정이 된다 — **연결 설정으로 살 수 있는 것은 1.57배이고, 문장을 바꾸면 4.7배다.** 게다가 bulk 쪽이 write IO 는 오히려 많았다(341.0 대 297.3 MiB).
+- **after 가 지는 항목이 처음으로 나왔다.** before 의 락 단위는 청크 1,000행(≈37.7ms)이고 after 는 슬라이스 5만행(401.7ms)이다. 그 배치가 도는 동안 같은 구간을 건드리는 세션은 **10.6배 오래 기다린다.** 1~5번의 after 는 모든 항목에서 이겼기 때문에 "개선 = 전면적 우세" 로 읽기 쉬운데, 6번은 그렇지 않다. 무엇을 내주고 무엇을 얻는지 말할 수 없으면 그것은 개선안이 아니다.
+- **그리고 그 다이얼을 끝까지 돌리면 손해만 남는다.** `slice-size=0` 은 문장을 20개에서 1개로 줄이지만 Step 시간은 8.1s → 8.4s 로 **오히려 늘고**, 락 유지 시간은 401.7ms → 7,866ms 로 19.6배 나빠진다. 문장 20개는 이미 "없는 것과 같은" 비용이라 더 줄일 것이 없었던 것이다. **최적점은 가능한 최대가 아니라 곡선이 평평해지는 지점**이며, 4번의 청크 크기(1,000 → 10,000 에서 1.35배밖에 못 얻던 자리)와 같은 이야기다.
+- **슬라이스 시간이 평탄하다** (356.5ms ~ 401.7ms, 1.13배). 3번의 offset 페이징이 뒤 페이지로 갈수록 122.9배 느려졌던 것과 정반대다. 키 범위로 자르면 **구간 번호가 시간을 설명하지 못한다** — 3번에서 키셋 페이징이 보여준 성질이 쓰기 경로에서도 그대로 성립한다.
+- **갱신하는 컬럼 위의 인덱스는 순수한 비용이었다.** `(grade, point)` 를 걸면 after 는 8.1s → 14.0s (1.73배), write IO 는 229.3 → 1,291.6 MiB (**5.6배**)가 된다. before 도 45.1s / 1,830.7 MiB 로 같은 방향이다. 1번 문제의 "인덱스 유지 비용" 이 UPDATE 에서 재현되며, 배율은 그때보다 크다 — **`grade` 를 바꾸면 인덱스 상의 위치가 옮겨져야 하므로 갱신 75만 행마다 항목의 삭제와 삽입이 따라붙기 때문**이다.
+- **더구나 그 인덱스는 조건 경로로 쓰이지도 않는다.** `EXPLAIN` 은 인덱스가 있든 없든 `possible_keys: PRIMARY`, `key: PRIMARY`, `type: range` 를 돌려준다. `grade <> CASE ...` 는 인덱스로 좁힐 수 있는 조건이 아니고, `id BETWEEN` 은 PK 가 이미 최적이다. **설계 단계에서 `schema.sql` 주석에 "after 의 집합 UPDATE 조건 경로" 라고 적어 두었던 인덱스가, 구현해 보니 조건 경로가 아니라 청구서였다.** 인덱스를 "조회를 위해" 거는 판단은 그 조회가 실제로 그 인덱스를 타는지 확인하기 전까지는 추측이다.
+- **재실행에서 격차가 다시 벌어진다.** 둘 다 자연 멱등이라 갱신은 0행인데, after 는 1.1초에 끝나고 before 는 8.5초가 걸린다(`READ_COUNT 1,000,000` / `FILTER_COUNT 1,000,000`). before 는 **할 일이 없다는 사실을 확인하기 위해 100만 행을 애플리케이션까지 끌어올린다.** 5번에서 after 의 재실행이 `READ_COUNT=0` 이었던 것과 비교하면, 여기서의 8.5초는 틀린 것이 아니라 순전한 낭비다.
+- **읽기 스캔은 양쪽이 정확히 같다** (`HANDLER_READ_NEXT` 1,000,002). 3번처럼 스캔량이 다른 문제가 아니다. 유일하게 갈리는 읽기 지표는 `HANDLER_READ_KEY` 의 차이 752,660 인데, 그것이 정확히 **before 가 갱신할 행마다 PK 를 다시 찾은 횟수**다. 리더가 방금 읽고 온 행을 라이터가 키로 다시 찾는 구조가 숫자로 보이는 자리다.
 
 **측정 방법 두 가지.** Step 통계는 배치 메타데이터에서 읽는다.
 
