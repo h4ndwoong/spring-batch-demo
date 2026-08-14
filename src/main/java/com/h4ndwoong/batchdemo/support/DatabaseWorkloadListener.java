@@ -52,10 +52,34 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
      * bulk 프로토콜({@code COM_STMT_BULK_EXECUTE})로 보낸 명령 수.
      *
      * <p>MariaDB 드라이버는 배치를 <em>SQL 문을 다시 쓰는 방식</em>(여러 VALUES 를 한 INSERT 로)
-     * 또는 <em>전용 바이너리 프로토콜</em>로 보낼 수 있다. 후자는 {@code Com_insert} 를 올리지 않아,
-     * 이 카운터가 없으면 "왕복이 0" 이라는 착시가 생긴다. 두 경로의 합이 실제 왕복 횟수다.
+     * 또는 <em>전용 바이너리 프로토콜</em>({@code useBulkStmts=true})로 보낼 수 있다. 후자를 세기
+     * 위해 넣어 둔 이름이다.
+     *
+     * <p><b>다만 MariaDB 11.8.8 의 {@code SHOW GLOBAL STATUS} 에는 이 변수가 없다</b> (6번 문제를
+     * 구현하며 확인했다). 그리고 bulk 프로토콜로 보내도 <b>서버가 세는 문장 수는 줄지 않는다</b> —
+     * 20,000행을 bulk 로 보낸 실측에서 {@code Com_update} 가 그대로 20,000 이었고
+     * {@code Com_stmt_execute} 가 20,000 늘었다. 즉 이 카운터 계열이 말하는 것은 <b>네트워크 패킷
+     * 수가 아니라 서버가 실행한 문장 수</b>이며, 연결 설정은 그 값을 바꾸지 못한다 (줄어드는 것은
+     * 시간이다). 없는 이름은 조용히 빠지므로 목록에 남겨 둔다.
      */
     public static final String BULK_STATEMENTS = "COM_STMT_BULK_EXECUTE";
+
+    /**
+     * <b>서버가 실행한</b> UPDATE 문의 수. 행 수가 아니며 <b>6번 문제의 비교 축</b>이다.
+     *
+     * <p>"왕복" 이라고 부르기 쉽지만 정확히는 <b>문장 수</b>다. 6번을 구현하며 잰 결과, 연결 설정
+     * ({@code useBulkStmts=true})으로 배치를 패킷 하나에 묶어도 이 값은 그대로였다 — 드라이버가
+     * 묶어 보낸 것을 서버는 여전히 행 수만큼의 문장으로 실행한다. 그래서 <b>이 카운터를 줄이는
+     * 방법은 문장 자체를 줄이는 것뿐</b>이고, 그것이 6번 after 의 집합 UPDATE 다.
+     * <ul>
+     *   <li>before — 갱신 행마다 1 (약 75만)</li>
+     *   <li>after — 슬라이스마다 1 (기본 20)</li>
+     * </ul>
+     *
+     * <p>{@link #ROWS_UPDATED} 와 반드시 함께 본다. 문장 수만 줄고 갱신 행 수도 함께 줄었다면
+     * 그것은 개선이 아니라 일을 빠뜨린 것이다.
+     */
+    public static final String UPDATE_STATEMENTS = "COM_UPDATE";
 
     /**
      * 인덱스 순서로 "다음 행" 을 읽은 횟수. <b>3번 문제(offset 페이징)의 주 지표</b>다.
@@ -97,6 +121,44 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
      */
     public static final String ROWS_SCANNED_NO_INDEX = "HANDLER_READ_RND_NEXT";
 
+    /**
+     * 서버가 갱신한 <b>행</b>의 수. <b>6번 문제(대량 UPDATE 쓰기 경로)의 주 지표</b>다.
+     *
+     * <p>6번의 before/after 는 <em>같은 행 수를 갱신</em>한다. 달라지는 것은 그 갱신을 몇 번의
+     * 왕복에 나눠 담았는가 하나뿐이다.
+     * <ul>
+     *   <li>{@code COM_UPDATE} — before 는 행당 1, after 는 슬라이스당 1. <b>수만 배 차이</b></li>
+     *   <li>이 카운터 — <b>양쪽이 같아야 한다</b></li>
+     * </ul>
+     * 둘을 나란히 봐야 "왕복을 줄인 것이지 덜 갱신한 것이 아니다" 가 선다. 이 값이 어긋나면 after 는
+     * 개선이 아니라 <b>일을 빠뜨린 버그</b>이고, 배치는 그래도 {@code COMPLETED} 로 끝난다.
+     *
+     * <p>4번의 {@link #INDEX_LOOKUPS} 와 같은 역할이며, {@code Innodb_rows_updated} 가 아니라
+     * {@code Handler_*} 를 쓰는 이유도 같다 — MariaDB 11.8.8 의 {@code SHOW GLOBAL STATUS} 에는
+     * {@code Innodb_rows_*} 계열이 없다.
+     *
+     * <p><b>전역 카운터다.</b> 배치 메타데이터 UPDATE(커밋당 2행 남짓)도 여기 섞인다. 절대값이
+     * 아니라 "갱신 행 수와 왕복 횟수의 비" 로 읽는다.
+     */
+    public static final String ROWS_UPDATED = "HANDLER_UPDATE";
+
+    /**
+     * 행 잠금을 기다린 총 시간(밀리초). <b>6번 문제의 청구서</b>다.
+     *
+     * <p>집합 UPDATE 는 왕복을 없애는 대신 <b>락 단위를 키운다.</b> before 는 청크(1,000행)마다
+     * 커밋해 락을 놓아주지만, 분할하지 않은 집합 UPDATE 한 문장은 대상 전체를 커밋까지 붙잡는다.
+     * 1~5번에서 after 가 모든 항목에서 이겼던 것과 달리 <b>6번에는 after 가 지는 항목이 있고</b>,
+     * 그것을 다시 다이얼로 만드는 것이 슬라이스 크기다.
+     *
+     * <p><b>경합이 없으면 0 이다.</b> 이 값은 <em>기다린</em> 시간이지 <em>잡고 있던</em> 시간이
+     * 아니다. 유휴 DB 에서 배치 혼자 돌면 아무도 기다리지 않으므로 락 비용이 지표에 드러나지 않는다.
+     * 잡고 있던 시간의 상한은 슬라이스별 문장 시간(after) 과 청크 시간(before) 으로 본다.
+     */
+    public static final String LOCK_WAIT_TIME = "INNODB_ROW_LOCK_TIME";
+
+    /** 행 잠금을 기다린 횟수. {@link #LOCK_WAIT_TIME} 과 함께 본다. 경합이 없으면 0 이다. */
+    public static final String LOCK_WAITS = "INNODB_ROW_LOCK_WAITS";
+
     /** 디스크에 쓴 페이지 수. */
     public static final String PAGES_WRITTEN = "INNODB_PAGES_WRITTEN";
 
@@ -105,12 +167,17 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
 
     /**
      * 읽을 카운터. 1번 문제만이 아니라 7문제 전부의 지표를 한 벌로 모은다.
-     * 6번(대량 UPDATE)은 {@code COM_UPDATE}, 4번(N+1 조회)은 {@code COM_SELECT} 와
-     * {@link #INDEX_LOOKUPS}, 3번(offset 페이징)은 {@link #ROWS_SCANNED} 가 주 지표다.
+     * 6번(대량 UPDATE)은 {@link #UPDATE_STATEMENTS} 와 {@link #ROWS_UPDATED}, 4번(N+1 조회)은
+     * {@code COM_SELECT} 와 {@link #INDEX_LOOKUPS}, 3번(offset 페이징)은 {@link #ROWS_SCANNED} 가
+     * 주 지표다.
+     *
+     * <p>서버가 제공하지 않는 이름은 {@link #readCounters()} 에서 조용히 빠진다. 목록에 넣는 것은
+     * 공짜이고, 없는 변수 때문에 Job 이 실패하지는 않는다.
      */
     private static final List<String> COUNTERS = List.of(
-            INSERT_STATEMENTS, BULK_STATEMENTS, "COM_UPDATE", "COM_SELECT", "COM_COMMIT",
-            ROWS_SCANNED, ROWS_SCANNED_NO_INDEX, INDEX_LOOKUPS, PAGES_WRITTEN, BYTES_WRITTEN);
+            INSERT_STATEMENTS, BULK_STATEMENTS, UPDATE_STATEMENTS, "COM_SELECT", "COM_COMMIT",
+            ROWS_SCANNED, ROWS_SCANNED_NO_INDEX, INDEX_LOOKUPS, ROWS_UPDATED,
+            LOCK_WAIT_TIME, LOCK_WAITS, PAGES_WRITTEN, BYTES_WRITTEN);
 
     /**
      * {@code information_schema.GLOBAL_STATUS} 가 아니라 {@code SHOW GLOBAL STATUS} 를 쓴다.
@@ -215,6 +282,12 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
             report.append(String.format("  %-22s %15.4f  (1.0 이면 행마다 왕복)%n",
                     "INSERT 왕복 / 아이템", (double) insertRoundTrips(delta) / written));
         }
+
+        long updatedRows = delta.getOrDefault(ROWS_UPDATED, 0L);
+        if (updatedRows > 0) {
+            report.append(String.format("  %-22s %15.4f  (1.0 이면 행마다 왕복)%n",
+                    "UPDATE 왕복 / 갱신 행", (double) updateRoundTrips(delta) / updatedRows));
+        }
         report.append(String.format("  %-22s %15.1f MiB%n",
                 "디스크 write", (double) delta.getOrDefault(BYTES_WRITTEN, 0L) / BYTES_IN_MIB));
         return report.toString();
@@ -228,6 +301,21 @@ public class DatabaseWorkloadListener implements JobExecutionListener {
      */
     public static long insertRoundTrips(Map<String, Long> delta) {
         return delta.getOrDefault(INSERT_STATEMENTS, 0L) + delta.getOrDefault(BULK_STATEMENTS, 0L);
+    }
+
+    /**
+     * UPDATE 때문에 서버가 실행한 문장 수. SQL 문장 경로와 bulk 프로토콜 경로의 합이다.
+     *
+     * <p>MariaDB 11.8.8 에서는 {@link #BULK_STATEMENTS} 가 보고되지 않아 사실상
+     * {@link #UPDATE_STATEMENTS} 와 같지만, 서버 버전이 그 변수를 내보내기 시작하면 한쪽만 보는
+     * 실행이 "문장 0개" 로 보일 수 있으므로 합으로 읽는다 ({@link #insertRoundTrips(Map)} 과 같은
+     * 방어다).
+     *
+     * @param delta {@link #lastDelta()} 같은 카운터 증가분
+     * @return 문장 수
+     */
+    public static long updateRoundTrips(Map<String, Long> delta) {
+        return delta.getOrDefault(UPDATE_STATEMENTS, 0L) + delta.getOrDefault(BULK_STATEMENTS, 0L);
     }
 
     /** 이 Job 이 실제로 쓴 아이템 수. 왕복 횟수의 분모이며 배치만이 아는 값이다. */

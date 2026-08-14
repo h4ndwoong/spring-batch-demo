@@ -72,6 +72,43 @@ class DatabaseWorkloadListenerTest {
                 .isGreaterThanOrEqualTo(0L);
     }
 
+    @Test
+    @DisplayName("6번 문제가 쓸 갱신·락 카운터가 서버에 존재한다")
+    void 갱신_카운터가_있다() {
+        Map<String, Long> counters = listener.readCounters();
+
+        assertThat(counters)
+                .as("이 지표들이 없으면 '왕복만 줄었고 갱신 행 수는 같다' 를 증명할 수 없다")
+                .containsKeys(DatabaseWorkloadListener.UPDATE_STATEMENTS,
+                        DatabaseWorkloadListener.ROWS_UPDATED,
+                        DatabaseWorkloadListener.LOCK_WAIT_TIME,
+                        DatabaseWorkloadListener.LOCK_WAITS);
+    }
+
+    @Test
+    @DisplayName("행별 UPDATE 는 문 수와 갱신 행 수가 함께 늘어난다 - 6번 before 의 1:1 왕복")
+    void 행별_UPDATE_는_행마다_왕복한다() {
+        for (int i = 1; i <= ROWS; i++) {
+            jdbcTemplate.update("""
+                    INSERT INTO member_a (email, name, grade, point, status, created_at)
+                    VALUES (?, '측정', 'BRONZE', 0, 'ACTIVE', NOW(6))""", "probe" + i + "@example.com");
+        }
+        Map<String, Long> before = listener.readCounters();
+
+        for (Long id : jdbcTemplate.queryForList("SELECT id FROM member_a", Long.class)) {
+            jdbcTemplate.update("UPDATE member_a SET grade = 'SILVER' WHERE id = ?", id);
+        }
+
+        Map<String, Long> after = listener.readCounters();
+
+        assertThat(delta(before, after, DatabaseWorkloadListener.UPDATE_STATEMENTS))
+                .as("UPDATE 를 %d번 보냈으므로 문 수가 그만큼은 늘어야 한다", ROWS)
+                .isGreaterThanOrEqualTo(ROWS);
+        assertThat(delta(before, after, DatabaseWorkloadListener.ROWS_UPDATED))
+                .as("갱신된 행도 %d 건이다. 6번의 after 는 이 값을 유지한 채 문 수만 줄인다", ROWS)
+                .isGreaterThanOrEqualTo(ROWS);
+    }
+
     private long delta(Map<String, Long> before, Map<String, Long> after, String counter) {
         return after.get(counter) - before.get(counter);
     }
