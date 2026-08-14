@@ -1,6 +1,7 @@
 package com.h4ndwoong.batchdemo.seed;
 
 import com.h4ndwoong.batchdemo.domain.MemberBase;
+import com.h4ndwoong.batchdemo.support.RunIdOnlyIncrementer;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.JobScope;
@@ -69,10 +70,10 @@ public class SeedJobConfig {
     /**
      * 시딩 Job.
      *
-     * <p>{@link SeedRunIdIncrementer} 를 붙여 같은 {@code target} 으로 다시 실행할 수 있게 한다.
+     * <p>{@link RunIdOnlyIncrementer} 를 붙여 같은 {@code target} 으로 다시 실행할 수 있게 한다.
      * 이것만 두면 중복 시딩 사고가 나므로 {@link TargetTableEmptyValidator} 가 짝을 이룬다.
      * Spring Batch 가 기본 제공하는 {@code RunIdIncrementer} 를 쓰지 않는 이유는
-     * {@link SeedRunIdIncrementer} 에 적었다.
+     * {@link RunIdOnlyIncrementer} 에 적었다.
      *
      * @param jobRepository Job 저장소
      * @param seedStep      시딩 Step
@@ -82,7 +83,7 @@ public class SeedJobConfig {
     @Bean
     public Job seedJob(JobRepository jobRepository, Step seedStep, TargetTableEmptyValidator validator) {
         return new JobBuilder("seedJob", jobRepository)
-                .incrementer(new SeedRunIdIncrementer())
+                .incrementer(new RunIdOnlyIncrementer())
                 .listener(validator)
                 .start(seedStep)
                 .build();

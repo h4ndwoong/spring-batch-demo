@@ -1,4 +1,4 @@
-package com.h4ndwoong.batchdemo.seed;
+package com.h4ndwoong.batchdemo.support;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,16 +10,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * {@link SeedRunIdIncrementer} 가 이전 실행의 파라미터를 물려주지 않는지 검증한다.
+ * {@link RunIdOnlyIncrementer} 가 이전 실행의 파라미터를 물려주지 않는지 검증한다.
  *
- * <p>이 성질이 깨지면 CLI 에서 생략한 {@code count} 가 이전 실행 값으로 채워져 시딩 규모가 조용히
+ * <p>이 성질이 깨지면 CLI 에서 생략한 {@code count} 가 이전 실행 값으로 채워져 적재 규모가 조용히
  * 틀어진다. Spring Boot 의 {@code JobLauncherApplicationRunner} 는
  * {@code incrementer.getNext(이전_파라미터)} 의 결과를 기준으로 CLI 인자를 덮으므로,
  * incrementer 가 무엇을 반환하는지가 곧 무엇이 상속되는지를 결정한다.
  */
-class SeedRunIdIncrementerTest {
+class RunIdOnlyIncrementerTest {
 
-    private final SeedRunIdIncrementer incrementer = new SeedRunIdIncrementer();
+    private final RunIdOnlyIncrementer incrementer = new RunIdOnlyIncrementer();
 
     private static JobParameters previousRun() {
         return new JobParametersBuilder()

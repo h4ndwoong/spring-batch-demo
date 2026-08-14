@@ -1,4 +1,4 @@
-package com.h4ndwoong.batchdemo.seed;
+package com.h4ndwoong.batchdemo.support;
 
 import org.springframework.batch.core.JobParameter;
 import org.springframework.batch.core.JobParameters;
@@ -21,13 +21,17 @@ import org.springframework.batch.core.JobParametersIncrementer;
  * 2) target=member_c            → count 를 안 줬는데 이전 실행의 50 이 상속되어
  *                                 200만 건이 아니라 50건만 적재된다
  * </pre>
- * 시딩 규모가 조용히 틀어지면 그 뒤의 모든 측정치가 무의미해지고, 원인을 찾기도 어렵다.
- * 그래서 이전 파라미터를 버리고 {@code run.id} 만 만들어 넘긴다. 생략한 파라미터는
- * {@link SeedJobConfig} 가 정한 기본값으로 해석된다.
+ * 적재 규모가 조용히 틀어지면 그 뒤의 모든 측정치가 무의미해지고, 원인을 찾기도 어렵다.
+ * 그래서 이전 파라미터를 버리고 {@code run.id} 만 만들어 넘긴다. 생략한 파라미터는 각 Job 구성이
+ * 정한 기본값으로 해석된다.
+ *
+ * <p>이 성질은 시딩만의 요구가 아니라 <b>파라미터로 규모를 조절하는 모든 Job</b>의 요구다.
+ * {@code seedJob} 의 {@code count} 와 {@code insertJob} 의 {@code count} 가 같은 사고를 공유하므로
+ * 특정 문제에 묶지 않고 공용으로 둔다.
  *
  * @see <a href="https://docs.spring.io/spring-batch/reference/job.html">JobParametersIncrementer</a>
  */
-public class SeedRunIdIncrementer implements JobParametersIncrementer {
+public class RunIdOnlyIncrementer implements JobParametersIncrementer {
 
     /** {@code RunIdIncrementer} 와 같은 키를 쓴다. 로그와 메타데이터에서 의미가 그대로 읽히도록. */
     static final String RUN_ID = "run.id";
