@@ -206,7 +206,11 @@ CREATE TABLE IF NOT EXISTS member_g_outbox
 --      ALTER TABLE member_a ADD KEY idx_member_a_grade (grade);
 --      ALTER TABLE member_a ADD KEY idx_member_a_created_at (created_at);
 --
---  5번 member_e : after 개선 기법. before 에 걸면 비멱등이 재현되지 않는다.
+--  5번 member_e : after 개선 기법. Job 리스너가 프로파일에 따라 만들거나 지운다
+--                 (after = 생성, before = 제거). before 에 걸어도 아무것도 막지 못한다 —
+--                 before 는 idempotency_key 를 쓰지 않아 값이 전부 NULL 이고,
+--                 UNIQUE 제약은 NULL 을 중복으로 보지 않기 때문이다. 제약은 그 컬럼에
+--                 실제로 쓰는 코드가 있을 때만 산다.
 --      ALTER TABLE member_e ADD UNIQUE KEY uk_member_e_idem (idempotency_key);
 --
 --  6번 member_f : after 의 집합 UPDATE 조건 경로. before 는 PK 단건 UPDATE 라 무관.
