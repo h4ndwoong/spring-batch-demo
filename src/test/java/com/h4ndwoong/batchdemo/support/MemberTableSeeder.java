@@ -43,11 +43,33 @@ public final class MemberTableSeeder {
                             MemberFactory factory,
                             long count,
                             int corruptInterval) {
+        seed(jdbcTemplate, table, factory, count, corruptInterval, false);
+    }
+
+    /**
+     * 대상 테이블을 비우고 지정한 건수를 채운다. 자기 참조 여부까지 정한다.
+     *
+     * <p><b>{@code selfReferencing} 이 필요한 이유</b><br>
+     * 4번 문제({@code member_d})는 모든 행이 실재하는 추천인을 가리켜야 N+1 이 매 행 성립한다.
+     * {@link com.h4ndwoong.batchdemo.seed.SeedTarget#MEMBER_D} 가 실행 환경에서 그렇게 시딩하므로
+     * 테스트도 같은 데이터를 만들어야 한다.
+     *
+     * @param jdbcTemplate    JDBC 템플릿
+     * @param table           대상 테이블 이름. 테스트 코드가 정하는 상수만 넘긴다
+     * @param factory         생성할 엔티티 타입
+     * @param count           생성 건수
+     * @param corruptInterval 오염 간격. 오염이 없으면 {@code 0}
+     * @param selfReferencing 각 행이 앞선 행을 {@code referrer_id} 로 가리켜야 하는지 여부
+     */
+    public static void seed(JdbcTemplate jdbcTemplate,
+                            String table,
+                            MemberFactory factory,
+                            long count,
+                            int corruptInterval,
+                            boolean selfReferencing) {
         jdbcTemplate.execute("TRUNCATE TABLE " + table);
 
-        MemberSeedGenerator generator = new MemberSeedGenerator(
-                factory, corruptInterval, false,
-                MemberSeedGenerator.DEFAULT_SEED, MemberSeedGenerator.BASE_TIME);
+        MemberSeedGenerator generator = generator(factory, corruptInterval, selfReferencing);
 
         String sql = INSERT_SQL_TEMPLATE.formatted(table);
         List<Object[]> batch = new ArrayList<>(BATCH_SIZE);
@@ -61,6 +83,21 @@ public final class MemberTableSeeder {
         if (!batch.isEmpty()) {
             jdbcTemplate.batchUpdate(sql, batch);
         }
+    }
+
+    /**
+     * 시딩과 <b>같은 데이터</b>를 만드는 생성기. 테스트가 기대값을 독립적으로 계산하는 데 쓴다.
+     *
+     * @param factory         생성할 엔티티 타입
+     * @param corruptInterval 오염 간격
+     * @param selfReferencing 자기 참조 여부
+     * @return 생성기
+     */
+    public static MemberSeedGenerator generator(MemberFactory factory,
+                                                int corruptInterval,
+                                                boolean selfReferencing) {
+        return new MemberSeedGenerator(factory, corruptInterval, selfReferencing,
+                MemberSeedGenerator.DEFAULT_SEED, MemberSeedGenerator.BASE_TIME);
     }
 
     /**
