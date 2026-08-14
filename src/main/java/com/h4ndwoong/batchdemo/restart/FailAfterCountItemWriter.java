@@ -1,6 +1,7 @@
 package com.h4ndwoong.batchdemo.restart;
 
 import com.h4ndwoong.batchdemo.domain.MemberBase;
+import com.h4ndwoong.batchdemo.support.InjectedFailureException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.batch.item.Chunk;
@@ -20,6 +21,11 @@ import org.springframework.batch.item.ItemWriter;
  * 실제 UPDATE 를 보내기 전에 던지므로 실패한 청크는 DB 에 아무 흔적도 남기지 않는다. 남은 것은
  * 오직 <b>그 앞까지 커밋된 것</b>이고, 그 상태에서 다시 실행했을 때 무슨 일이 일어나는가가 5번의
  * 전부다.
+ *
+ * <p>7번의 {@link com.h4ndwoong.batchdemo.outbox.FailAfterWriteItemWriter} 는 <b>정확히 반대로</b>
+ * 위임한 뒤에 던진다. 5번은 트랜잭션이 이미 해결한 문제를 피해 가고, 7번은 트랜잭션이 해결하지
+ * 못하는 것 — 이미 밖으로 나간 알림 — 을 드러낸다. 같은 예외를 던지는 두 장치의 유일한 차이가
+ * <b>던지는 줄의 위치</b>이고, 그 한 줄이 두 문제를 가른다.
  *
  * <p><b>왜 재시도·스킵으로 회복되지 않는가</b><br>
  * {@link InjectedFailureException} 은 어떤 분류 목록에도 없고 {@code restartStep} 은
