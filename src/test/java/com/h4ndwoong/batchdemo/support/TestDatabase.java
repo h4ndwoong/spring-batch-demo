@@ -30,6 +30,19 @@ public final class TestDatabase {
             "spring.datasource.url=jdbc:mariadb://localhost:3307/batch_demo_test"
                     + "?createDatabaseIfNotExist=true&rewriteBatchedStatements=true";
 
+    /**
+     * UPDATE 까지 묶어 보내는 연결. <b>6번 문제의 부록 측정</b>이 쓴다.
+     *
+     * <p>{@link #URL_WITH_BATCH_REWRITE} 의 {@code rewriteBatchedStatements} 는 INSERT 를 다시 쓸 뿐
+     * UPDATE 를 묶지 않는다 (2번 문제의 실측에서 드러났다). MariaDB 드라이버가 UPDATE 를 묶는
+     * 경로는 bulk 프로토콜이며, 그때 왕복은 {@code COM_UPDATE} 가 아니라
+     * {@code COM_STMT_BULK_EXECUTE} 로 잡힌다 — 두 카운터를 더해야 진짜 왕복이라는 사실이
+     * 여기서 실증된다.
+     */
+    public static final String URL_WITH_BULK_STATEMENTS =
+            "spring.datasource.url=jdbc:mariadb://localhost:3307/batch_demo_test"
+                    + "?createDatabaseIfNotExist=true&useBulkStmts=true";
+
     /** Spring Batch 메타데이터 테이블을 생성한다. */
     public static final String BATCH_SCHEMA = "spring.batch.jdbc.initialize-schema=always";
 
