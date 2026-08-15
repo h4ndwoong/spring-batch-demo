@@ -45,7 +45,7 @@ import org.springframework.transaction.PlatformTransactionManager;
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=pagingJob'
  *
  * # before 와 같은 구간으로 비교
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=pagingJob' pages=200
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=pagingJob pages=200'
  * }</pre>
  *
  * @see KeysetPagingItemReader 키셋 페이징의 전제(유니크한 정렬 키, 인덱스, 임의 페이지 접근 불가)

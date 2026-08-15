@@ -55,10 +55,10 @@ import javax.sql.DataSource;
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.batch.job.name=seedJob target=member_e'
  *
  * # 실행 1 — 15만 건을 커밋한 뒤 실패한다
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=restartJob' failAfterCount=150000,java.lang.Long,false
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=restartJob failAfterCount=150000,java.lang.Long,false'
  *
  * # 실행 2 — 재시작. 실패한 실행의 run.id 를 그대로 준다 (BATCH_JOB_EXECUTION_PARAMS 에서 확인)
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=restartJob' run.id=1
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=restartJob run.id=1'
  *
  * # 실행 3 — 재실행. run.id 가 증가해 새 JobInstance 가 된다
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=restartJob'

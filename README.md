@@ -113,6 +113,20 @@ Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙�
 아무 Job도 실행되지 않으므로, 실행할 때마다 `--spring.batch.job.enabled=true` 를 함께 넘긴다. 이 값을 켠 채로 Job 이름을 생략하면 컨텍스트의 **모든** Job이 실행되니
 주의한다.
 
+**Spring 설정과 Job 파라미터는 둘 다 `--args` 안에 넣는다.** 구분은 `--` 접두사 하나뿐이다.
+
+```bash
+# Spring 설정은 -- 를 붙이고, Job 파라미터는 붙이지 않는다. 둘 다 따옴표 안이다.
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.batch.job.name=pagingJob pages=200'
+
+# 따옴표 밖에 두면 Gradle 이 태스크 이름으로 읽는다:
+#   Task 'pages=200' not found in root project 'spring-batch-demo'.
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.batch.job.name=pagingJob' pages=200   # (X)
+```
+
+파라미터의 타입과 식별 여부까지 지정할 때는 `DefaultJobParametersConverter` 의 `key=value,type,identifying` 문법을 쓴다 (5·7번 문제의
+`failAfterCount=150000,java.lang.Long,false`). 이때는 값에 쉼표가 들어가므로 따옴표 안이라는 점이 더 중요해진다.
+
 ## 학습 목표: 7가지 실무 문제
 
 | # | 실무 문제                                      | 테이블     | Job          | before 증상                                | after 개선 기법                           |
@@ -213,10 +227,10 @@ Job 파라미터는 `--` **없이** 넘긴다 (`target=member_c`). `--` 를 붙�
 
 ```bash
 # 일시 장애 2회 → 재시도로 회복 (COMPLETED)
-./gradlew bootRun --args='... --spring.profiles.active=after --spring.batch.job.name=skipJob' faultAtId=50001 faultTimes=2
+./gradlew bootRun --args='... --spring.profiles.active=after --spring.batch.job.name=skipJob faultAtId=50001 faultTimes=2'
 
 # 분류되지 않은 예외 → 스킵되지 않고 실패 (FAILED 가 정상이다)
-./gradlew bootRun --args='... --spring.profiles.active=after --spring.batch.job.name=skipJob' faultAtId=50001 faultKind=FATAL
+./gradlew bootRun --args='... --spring.profiles.active=after --spring.batch.job.name=skipJob faultAtId=50001 faultKind=FATAL'
 ```
 
 **측정 쿼리**
@@ -300,8 +314,8 @@ before 의 전체 완주는 **약 10분**이다 (실측 622초. after 는 15초)
 ./gradlew bootRun --args="--spring.batch.job.enabled=true --spring.batch.job.name=seedJob target=member_c"
 
 # 빠른 비교 (앞 200페이지)
-./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob' pages=200
-./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after  --spring.batch.job.name=pagingJob' pages=200
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob pages=200'
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after  --spring.batch.job.name=pagingJob pages=200'
 
 # 전체 완주
 ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob'
@@ -399,7 +413,7 @@ before.Handler_read_key / after.Handler_read_key ≈ 2배            ← DB 가 
 ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --lookup.chunk-size=5000 --spring.batch.job.name=lookupJob'
 
 # 앞 5만 건만 비교
-./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=lookupJob' limit=50000
+./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=lookupJob limit=50000'
 ```
 
 **리셋이 필요 없다.** 이 Job 은 읽기만 하므로 몇 번을 돌려도 `member_d` 가 변하지 않는다.

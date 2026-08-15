@@ -44,7 +44,7 @@ import org.springframework.transaction.PlatformTransactionManager;
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob'
  *
  * # 앞 200페이지만 (기울기 확인용. after 에도 같은 값을 준다)
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob' pages=200
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=pagingJob pages=200'
  * }</pre>
  *
  * <p><b>측정</b>

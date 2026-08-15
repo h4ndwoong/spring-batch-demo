@@ -68,10 +68,10 @@ import java.time.Clock;
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=skipJob'
  *
  * # 재시도 경로 확인 (50001번 행이 속한 청크의 쓰기를 2번 실패시킨다 → 재시도로 회복)
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=skipJob' faultAtId=50001 faultTimes=2
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=skipJob faultAtId=50001 faultTimes=2'
  *
  * # 분류되지 않은 예외는 스킵되지 않는다 (Step 이 실패해야 정상이다)
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=skipJob' faultAtId=50001 faultKind=FATAL
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=skipJob faultAtId=50001 faultKind=FATAL'
  * }</pre>
  *
  * <p><b>측정</b>

@@ -39,7 +39,7 @@ import org.springframework.transaction.PlatformTransactionManager;
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=insertJob'
  *
  * # 규모를 줄여서 확인
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=insertJob' count=10000
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=insertJob count=10000'
  * }</pre>
  *
  * <p><b>Job 파라미터</b>

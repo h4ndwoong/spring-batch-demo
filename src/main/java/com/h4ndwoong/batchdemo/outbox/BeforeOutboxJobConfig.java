@@ -55,7 +55,7 @@ import org.springframework.transaction.PlatformTransactionManager;
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.batch.job.name=seedJob target=member_g'
  *
  * # 실행 1 - 커밋 직전에 죽는다
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=outboxJob' failAfterCount=50000,java.lang.Long,false
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=outboxJob failAfterCount=50000,java.lang.Long,false'
  *
  * # 실행 2 - 재실행
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=outboxJob'

@@ -84,7 +84,7 @@ import java.util.List;
  * #   TRUNCATE TABLE member_g; TRUNCATE TABLE member_g_outbox;
  * #   ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.batch.job.name=seedJob target=member_g'
  *
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=outboxJob' failAfterCount=50000,java.lang.Long,false
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=outboxJob failAfterCount=50000,java.lang.Long,false'
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=outboxJob'
  *
  * # 부록 - 릴레이 커밋 단위 축 (중복의 상한)

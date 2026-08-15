@@ -40,7 +40,7 @@ import org.springframework.transaction.PlatformTransactionManager;
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=lookupJob'
  *
  * # 앞 5만 건만 (after 에도 같은 값을 준다)
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=lookupJob' limit=50000
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --spring.batch.job.name=lookupJob limit=50000'
  *
  * # 청크 크기를 바꿔서 (before 에서는 조회 횟수가 <b>변하지 않는다</b>는 것이 관찰 대상이다)
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=before --lookup.chunk-size=5000 --spring.batch.job.name=lookupJob'

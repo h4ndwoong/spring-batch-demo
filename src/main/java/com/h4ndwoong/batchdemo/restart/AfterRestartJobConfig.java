@@ -65,8 +65,8 @@ import java.time.Clock;
  * #   TRUNCATE TABLE member_e;
  * #   ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.batch.job.name=seedJob target=member_e'
  *
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=restartJob' failAfterCount=150000,java.lang.Long,false
- * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=restartJob' run.id=1
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=restartJob failAfterCount=150000,java.lang.Long,false'
+ * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=restartJob run.id=1'
  * ./gradlew bootRun --args='--spring.batch.job.enabled=true --spring.profiles.active=after --spring.batch.job.name=restartJob'
  * }</pre>
  *
