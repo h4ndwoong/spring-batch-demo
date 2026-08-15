@@ -175,10 +175,25 @@ CREATE TABLE IF NOT EXISTS member_g
 ) ENGINE = InnoDB;
 
 -- after 전용. Step 트랜잭션 안에서는 "발송 요청"만 여기에 기록하고,
--- 커밋 이후 별도 릴레이가 읽어서 실제 발송한다.
--- uk_member_g_outbox_key : 재실행 시 중복 발송을 DB 레벨에서 차단하는 것이
---                          Outbox 패턴의 핵심이므로 이 UK 는 테이블과 함께 만든다.
+-- 커밋 이후 relayStep 이 읽어서 실제 발송한다.
+--
+-- uk_member_g_outbox_key : 설계 단계에서 "재실행 시 중복 발송을 DB 레벨에서 차단하는 것이
+--     Outbox 패턴의 핵심" 이라고 적어 두었으나, 구현하며 역할이 바뀌었다 (6번 인덱스와 같은
+--     종류의 착오다). 정상 경로에서 이 제약은 한 번도 걸리지 않는다 — 적재와 상태 변경이 같은
+--     트랜잭션이라 "Outbox 에 있다" 와 "이미 전이됐다" 가 같은 말이고, 전이된 회원은 읽기 조건
+--     status='ACTIVE' 에 걸려 다시 읽히지 않기 때문이다. 중복 적재를 실제로 막는 것은 그
+--     원자성이고, 이 UK 는 원자성이 깨졌거나 키 생성 규칙이 틀렸을 때를 위한 마지막 그물이다
+--     (5번의 uk_member_e_idem 과 같은 결론). 그물 없이 그 일이 벌어지면 릴레이는 같은 알림을
+--     성실하게 두 번 보내고 배치는 COMPLETED 로 끝난다. 그래서 테이블과 함께 만든다.
+--
 -- idx_member_g_outbox_poll : 릴레이가 미발송 건을 순서대로 폴링하는 경로.
+--     1·5·6번의 인덱스와 달리 before/after 의 비교 대상이 아니라 릴레이가 존재하기 위한
+--     전제이므로 여기서 만든다.
+--
+-- retry_count / last_error / status='FAILED' : 이 실습은 쓰지 않는다. 최소 구현의 릴레이는
+--     발송에 실패하면 예외를 올려 청크를 롤백하고 PENDING 으로 남긴다 (다음 실행이 다시 집는다).
+--     세 자리를 지우지 않는 이유는 재시도 정책 없는 Outbox 가 미완성이라는 사실을 스키마가
+--     계속 말하게 하기 위해서다.
 CREATE TABLE IF NOT EXISTS member_g_outbox
 (
     id              BIGINT        NOT NULL AUTO_INCREMENT,
